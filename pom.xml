@@ -221,6 +221,7 @@
         <module>deployment-scanner</module>
         <module>domain-controller</module>
         <module>domain-http-api</module>
+        <module>domain-webproxy-api</module>
         <module>domain-management</module>
         <module>ee</module>
         <module>ejb3</module>
