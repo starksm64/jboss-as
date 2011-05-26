@@ -30,12 +30,12 @@
     <parent>
         <groupId>org.jboss.as</groupId>
         <artifactId>jboss-as-parent</artifactId>
-        <version>7.0.0.Beta4-SNAPSHOT</version>
+        <version>7.0.0.Beta5OS</version>
     </parent>
 
     <groupId>org.jboss.as</groupId>
     <artifactId>jboss-as-build</artifactId>
-    <version>7.0.0.Beta4-SNAPSHOT</version>
+    <version>7.0.0.Beta5OS</version>
 
     <name>JBoss Application Server: Build</name>
     <packaging>pom</packaging>

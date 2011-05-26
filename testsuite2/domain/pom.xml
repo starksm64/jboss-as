@@ -29,7 +29,7 @@
     <parent>
         <artifactId>jboss-as-testsuite2</artifactId>
         <groupId>org.jboss.as</groupId>
-        <version>7.0.0.Beta4-SNAPSHOT</version>
+        <version>7.0.0.Beta5OS</version>
     </parent>
 
     <artifactId>jboss-as-testsuite2-integration-domain</artifactId>
