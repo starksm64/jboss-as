@@ -22,12 +22,16 @@
 
 package org.jboss.as.testsuite.integration.ejb.remove;
 
-import org.jboss.arquillian.api.Deployment;
+import javax.ejb.NoSuchEJBException;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+
+import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.shrinkwrap.api.Archive;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
-import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.jboss.shrinkwrap.api.spec.JavaArchive;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -35,10 +39,6 @@ import org.junit.runner.RunWith;
 import javax.ejb.NoSuchEJBException;
 import javax.naming.InitialContext;
 import javax.naming.NamingException;
-import javax.persistence.TransactionRequiredException;
-
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 /**
  * @Remove tests
@@ -64,7 +64,6 @@ public class RemoveTestCase {
         jar.addClasses(RemoveTestCase.class,
             SFSB1.class
         );
-        jar.addResource(new StringAsset(""), "META-INF/MANIFEST.MF");
         return jar;
     }
 
@@ -88,5 +87,7 @@ public class RemoveTestCase {
         } catch (NoSuchEJBException expectedException) {
             // good
         }
+
+        Assert.assertTrue(SFSB1.preDestroyCalled);
     }
 }

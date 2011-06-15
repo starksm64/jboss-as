@@ -24,6 +24,7 @@ package org.jboss.as.ejb3.component.description;
 
 
 import org.jboss.as.ee.component.ViewDescription;
+import org.jboss.as.ejb3.component.EJBViewDescription;
 import org.jboss.as.ejb3.component.MethodIntf;
 import org.jboss.as.ejb3.component.session.SessionBeanComponentDescription;
 import org.jboss.as.ejb3.component.singleton.SingletonComponentDescription;
@@ -143,6 +144,14 @@ public class EjbJarDescriptionMergingUtil {
         mergeSessionBean(mergedStatefulBean, original, override);
 
         // now merge stateful bean specific info
+        // tx type
+        if (override.getStatefulTimeout() != null) {
+            mergedStatefulBean.setStatefulTimeout(override.getStatefulTimeout());
+        } else {
+            if (original.getStatefulTimeout() != null) {
+                mergedStatefulBean.setStatefulTimeout(original.getStatefulTimeout());
+            }
+        }
 
     }
 
@@ -151,6 +160,7 @@ public class EjbJarDescriptionMergingUtil {
         mergeSessionBean(mergedStatelessBean, original, override);
 
         // now merge stateless bean specific info
+
     }
 
     private static void mergeSessionBean(SessionBeanComponentDescription mergedBean, SessionBeanComponentDescription original, SessionBeanComponentDescription override) {
@@ -191,24 +201,24 @@ public class EjbJarDescriptionMergingUtil {
         }
 
         // bean level lock type
-        LockType overrideBeanLockType = override.getBeanLevelLockType();
+        LockType overrideBeanLockType = override.getBeanLevelLockType().get(mergedBean.getEJBClassName());
         if (overrideBeanLockType != null) {
-            mergedBean.setBeanLevelLockType(overrideBeanLockType);
+            mergedBean.setBeanLevelLockType(mergedBean.getEJBClassName(), overrideBeanLockType);
         } else {
-            LockType originalBeanLockType = original.getBeanLevelLockType();
+            LockType originalBeanLockType = original.getBeanLevelLockType().get(mergedBean.getEJBClassName());
             if (originalBeanLockType != null) {
-                mergedBean.setBeanLevelLockType(originalBeanLockType);
+                mergedBean.setBeanLevelLockType(mergedBean.getEJBClassName(), originalBeanLockType);
             }
         }
 
         // access timeout
-        AccessTimeout overrideAccessTimeout = override.getBeanLevelAccessTimeout();
+        AccessTimeout overrideAccessTimeout = override.getBeanLevelAccessTimeout().get(mergedBean.getEJBClassName());
         if (overrideAccessTimeout != null) {
-            mergedBean.setBeanLevelAccessTimeout(overrideAccessTimeout);
+            mergedBean.setBeanLevelAccessTimeout(mergedBean.getEJBClassName(), overrideAccessTimeout);
         } else {
-            AccessTimeout originalAccessTimeout = original.getBeanLevelAccessTimeout();
+            AccessTimeout originalAccessTimeout = original.getBeanLevelAccessTimeout().get(mergedBean.getEJBClassName());
             if (originalAccessTimeout != null) {
-                mergedBean.setBeanLevelAccessTimeout(originalAccessTimeout);
+                mergedBean.setBeanLevelAccessTimeout(mergedBean.getEJBClassName(), originalAccessTimeout);
             }
         }
 
@@ -217,7 +227,7 @@ public class EjbJarDescriptionMergingUtil {
         if (overrideViews != null && !overrideViews.isEmpty()) {
             for (ViewDescription view : overrideViews) {
                 String viewClassName = view.getViewClassName();
-                MethodIntf viewType = override.getMethodIntf(viewClassName);
+                MethodIntf viewType = ((EJBViewDescription) view).getMethodIntf();
                 addView(mergedBean, viewClassName, viewType);
             }
         } else {
@@ -225,10 +235,9 @@ public class EjbJarDescriptionMergingUtil {
             if (originalViews != null) {
                 for (ViewDescription view : originalViews) {
                     String viewClassName = view.getViewClassName();
-                    MethodIntf viewType = original.getMethodIntf(viewClassName);
+                    MethodIntf viewType = ((EJBViewDescription) view).getMethodIntf();
                     addView(mergedBean, viewClassName, viewType);
                 }
-
             }
         }
     }

@@ -77,6 +77,9 @@ public class TransactionExtension implements Extension {
         final ModelNodeRegistration registration = subsystem.registerSubsystemModel(TransactionSubsystemProviders.SUBSYSTEM);
         registration.registerOperationHandler(ADD, TransactionSubsystemAdd.INSTANCE, TransactionSubsystemProviders.SUBSYSTEM_ADD, false);
         registration.registerOperationHandler(DESCRIBE, TransactionDescribeHandler.INSTANCE, TransactionDescribeHandler.INSTANCE, false, OperationEntry.EntryType.PRIVATE);
+        for (TxStatsHandler.TxStat stat : EnumSet.allOf(TxStatsHandler.TxStat.class)) {
+            registration.registerMetric(stat.toString(), TxStatsHandler.INSTANCE);
+        }
         subsystem.registerXMLElementWriter(parser);
     }
 
@@ -170,7 +173,7 @@ public class TransactionExtension implements Extension {
                         store.get(PATH).set(value);
                         break;
                     default:
-                        unexpectedAttribute(reader, i);
+                        throw unexpectedAttribute(reader, i);
                 }
             }
             // Handle elements
@@ -189,11 +192,14 @@ public class TransactionExtension implements Extension {
                     case ENABLE_STATISTICS:
                         coordinator.get(ENABLE_STATISTICS).set(value);
                         break;
+                    case ENABLE_TSM_STATUS:
+                        coordinator.get(ENABLE_TSM_STATUS).set(value);
+                        break;
                     case DEFAULT_TIMEOUT:
                         coordinator.get(DEFAULT_TIMEOUT).set(value);
                         break;
                     default:
-                        unexpectedAttribute(reader, i);
+                        throw unexpectedAttribute(reader, i);
                 }
             }
             // Handle elements
@@ -220,7 +226,7 @@ public class TransactionExtension implements Extension {
                         env.get(NODE_IDENTIFIER).set(value);
                         break;
                     default:
-                        unexpectedAttribute(reader, i);
+                        throw unexpectedAttribute(reader, i);
                 }
             }
             // elements
@@ -228,6 +234,7 @@ public class TransactionExtension implements Extension {
             final EnumSet<Element> encountered = EnumSet.noneOf(Element.class);
             while (reader.hasNext() && reader.nextTag() != END_ELEMENT) {
                 final Element element = Element.forName(reader.getLocalName());
+                required.remove(element);
                 switch (element) {
                   case PROCESS_ID : {
                       if (!encountered.add(element)) {
@@ -240,10 +247,10 @@ public class TransactionExtension implements Extension {
                   }
                   default:
                      throw unexpectedElement(reader);
-               }
+                }
             }
             if (! required.isEmpty()) {
-                missingRequired(reader, required);
+                throw missingRequired(reader, required);
             }
             return env;
         }
@@ -304,11 +311,11 @@ public class TransactionExtension implements Extension {
                         socketId.get(SOCKET_PROCESS_ID_MAX_PORTS).set(value);
                         break;
                     default:
-                        unexpectedAttribute(reader, i);
+                        throw unexpectedAttribute(reader, i);
                 }
             }
             if (! required.isEmpty()) {
-                missingRequired(reader, required);
+                throw missingRequired(reader, required);
             }
             // Handle elements
             requireNoContent(reader);
@@ -329,12 +336,15 @@ public class TransactionExtension implements Extension {
                     case STATUS_BINDING:
                         env.get(STATUS_BINDING).set(value);
                         break;
+                    case RECOVERY_LISTENER:
+                        env.get(RECOVERY_LISTENER).set(value);
+                        break;
                     default:
                         unexpectedAttribute(reader, i);
                 }
             }
             if(! env.has(BINDING)) {
-                missingRequired(reader, Collections.singleton(Attribute.BINDING));
+                throw missingRequired(reader, Collections.singleton(Attribute.BINDING));
             }
             // Handle elements
             requireNoContent(reader);
@@ -368,7 +378,9 @@ public class TransactionExtension implements Extension {
                 }
                 if (has(env, STATUS_BINDING)) {
                     writeAttribute(writer, Attribute.STATUS_BINDING, env.get(STATUS_BINDING));
-
+                }
+                if (has(env, RECOVERY_LISTENER)) {
+                    writeAttribute(writer, Attribute.RECOVERY_LISTENER, env.get(RECOVERY_LISTENER));
                 }
                 writer.writeEndElement();
             }
@@ -377,6 +389,9 @@ public class TransactionExtension implements Extension {
                 final ModelNode env = node.get(COORDINATOR_ENVIRONMENT);
                 if (has(env, ENABLE_STATISTICS)) {
                     writeAttribute(writer, Attribute.ENABLE_STATISTICS, env.get(ENABLE_STATISTICS));
+                }
+                if (has(env, ENABLE_TSM_STATUS)) {
+                    writeAttribute(writer, Attribute.ENABLE_TSM_STATUS, env.get(ENABLE_TSM_STATUS));
                 }
                 if (has(env, DEFAULT_TIMEOUT)) {
                     writeAttribute(writer, Attribute.DEFAULT_TIMEOUT, env.get(DEFAULT_TIMEOUT));

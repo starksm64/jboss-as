@@ -58,13 +58,12 @@ public class SubDeploymentDependencyProcessor implements DeploymentUnitProcessor
                 // access to ear classes
                 ModuleDependency moduleDependency = new ModuleDependency(moduleLoader, parentModule, false, false, true);
                 moduleDependency.addImportFilter(PathFilters.acceptAll(), true);
-                moduleSpec.addDependency(moduleDependency);
+                moduleSpec.addLocalDependency(moduleDependency);
             }
         }
 
-        //If the extended class visibility flag is set up we need to set
-        //up dependencies on other sub deployments
-        if (parentModuleSpec.isExtendedClassVisibility()) {
+        //If the sub deployments aren't isolated, then we need to set up dependencies between the sub deployments
+        if (!parentModuleSpec.isSubDeploymentModulesIsolated()) {
             final List<DeploymentUnit> subDeployments = parent.getAttachmentList(Attachments.SUB_DEPLOYMENTS);
             final List<ModuleDependency> accessibleModules = new ArrayList<ModuleDependency>();
             for (DeploymentUnit subDeployment : subDeployments) {
@@ -78,7 +77,7 @@ public class SubDeploymentDependencyProcessor implements DeploymentUnitProcessor
             }
             for (ModuleDependency identifier : accessibleModules) {
                 if (!identifier.equals(moduleIdentifier)) {
-                    moduleSpec.addDependencies(accessibleModules);
+                    moduleSpec.addLocalDependencies(accessibleModules);
                 }
             }
         }

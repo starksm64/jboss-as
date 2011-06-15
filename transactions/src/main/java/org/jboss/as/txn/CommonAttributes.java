@@ -33,11 +33,14 @@ interface CommonAttributes {
     String COORDINATOR_ENVIRONMENT = "coordinator-environment";
     String DEFAULT_TIMEOUT = "default-timeout";
     String ENABLE_STATISTICS = "enable-statistics";
+    /** transaction status manager (TSM) service, needed for out of process recovery, should be provided or not */
+    String ENABLE_TSM_STATUS = "enable-tsm-status";
     String NODE_IDENTIFIER = "node-identifier";
     String OBJECT_STORE = "object-store";
     /** The com.arjuna.ats.arjuna.utils.Process implementation type */
     String PROCESS_ID = "process-id";
     String RECOVERY_ENVIRONMENT = "recovery-environment";
+    String RECOVERY_LISTENER = "recovery-environment";
     /** The process-id/socket element */
     String SOCKET = "socket";
     /** The process-id/socket attribute for max ports */
@@ -45,5 +48,15 @@ interface CommonAttributes {
     String STATUS_BINDING = "status-socket-binding";
     /** The process-id/uuid element */
     String UUID = "uuid";
+    // TxStats
+    String NUMBER_OF_TRANSACTIONS = "number-of-transactions";
+    String NUMBER_OF_NESTED_TRANSACTIONS = "number-of-nested-transactions";
+    String NUMBER_OF_HEURISTICS = "number-of-heuristics";
+    String NUMBER_OF_COMMITTED_TRANSACTIONS = "number-of-committed-transactions";
+    String NUMBER_OF_ABORTED_TRANSACTIONS = "number-of-aborted-transactions";
+    String NUMBER_OF_INFLIGHT_TRANSACTIONS = "number-of-inflight-transactions";
+    String NUMBER_OF_TIMED_OUT_TRANSACTIONS = "number-of-timed-out-transactions";
+    String NUMBER_OF_APPLICATION_ROLLBACKS = "number-of-application-rollbacks";
+    String NUMBER_OF_RESOURCE_ROLLBACKS = "number-of-resource-rollbacks";
     // TODO, process-id/mbean, process-id/file
 }

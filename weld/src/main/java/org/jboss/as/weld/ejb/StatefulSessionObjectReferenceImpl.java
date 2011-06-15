@@ -25,11 +25,12 @@ import org.jboss.as.ee.component.ComponentView;
 import org.jboss.as.ee.component.ComponentViewInstance;
 import org.jboss.as.ee.component.ViewDescription;
 import org.jboss.as.ejb3.component.stateful.StatefulSessionComponent;
-import org.jboss.as.weld.CurrentServiceRegistry;
+import org.jboss.as.server.CurrentServiceRegistry;
 import org.jboss.msc.service.ServiceController;
 import org.jboss.msc.service.ServiceName;
 import org.jboss.weld.ejb.api.SessionObjectReference;
 
+import javax.ejb.NoSuchEJBException;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
@@ -65,21 +66,23 @@ public class StatefulSessionObjectReferenceImpl implements SessionObjectReferenc
     @Override
     @SuppressWarnings({"unchecked"})
     public synchronized <S> S getBusinessObject(Class<S> businessInterfaceType) {
-
+        if(isRemoved()) {
+            throw new NoSuchEJBException("Bean has been removed");
+        }
         if (viewServices.containsKey(businessInterfaceType.getName())) {
             final ServiceController<?> serviceController = CurrentServiceRegistry.getServiceRegistry().getRequiredService(viewServices.get(businessInterfaceType.getName()));
             final ComponentView view = (ComponentView) serviceController.getValue();
             final ComponentViewInstance instance = view.createInstance(Collections.<Object, Object>singletonMap(StatefulSessionComponent.SESSION_ATTACH_KEY, id));
             return (S) instance.createProxy();
         } else {
-            throw new IllegalArgumentException("View of type " + businessInterfaceType + " not found on bean " + getComponent());
+            throw new IllegalStateException("View of type " + businessInterfaceType + " not found on bean " + getComponent());
         }
     }
 
     @Override
     public void remove() {
         if (!isRemoved()) {
-            getComponent().getCache().remove(id);
+            getComponent().removeSession(id);
             removed = true;
         }
     }
@@ -87,7 +90,12 @@ public class StatefulSessionObjectReferenceImpl implements SessionObjectReferenc
     @Override
     public boolean isRemoved() {
         if(!removed) {
-            return getComponent().getCache().get(id) == null;
+            try {
+                getComponent().getCache().get(id);
+                return false;
+            } catch (NoSuchEJBException e) {
+                return true;
+            }
         }
         return true;
     }

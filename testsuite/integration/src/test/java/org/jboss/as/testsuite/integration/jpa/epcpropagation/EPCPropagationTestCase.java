@@ -21,7 +21,14 @@
  */
 package org.jboss.as.testsuite.integration.jpa.epcpropagation;
 
-import org.jboss.arquillian.api.Deployment;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+
+import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.shrinkwrap.api.Archive;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
@@ -30,13 +37,6 @@ import org.jboss.shrinkwrap.api.spec.JavaArchive;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
-import javax.naming.InitialContext;
-import javax.naming.NamingException;
-
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 
 /**
  * For managed debugging:
@@ -83,8 +83,7 @@ public class EPCPropagationTestCase {
             StatelessInterface.class, AbstractStatefulInterface.class, EPCPropagationTestCase.class
         );
 
-        jar.addResource(new StringAsset(persistence_xml), "META-INF/persistence.xml");
-        jar.addResource(new StringAsset(""), "META-INF/MANIFEST.MF");
+        jar.addAsResource(new StringAsset(persistence_xml), "META-INF/persistence.xml");
         return jar;
     }
 
@@ -147,6 +146,12 @@ public class EPCPropagationTestCase {
         assertFalse("Name changes should not propagate", equal);
     }
 
+    /**
+     * 7.6.2.1 ensure that  NoTxEPCStatefulBean.em (extended persistence context entity manager) is inherited by
+     * StatelessBean.em (transactional scoped entity manager).  The test ensures that the modified entity (in XPC)
+     * is visible to the transactional scoped entity manager (modified entity is returned from em.find call).
+     * @throws Exception
+     */
     @Test
     public void testNoTxEPCPropagation() throws Exception {
         StatelessInterface stateless = lookup("StatelessBean", StatelessInterface.class);

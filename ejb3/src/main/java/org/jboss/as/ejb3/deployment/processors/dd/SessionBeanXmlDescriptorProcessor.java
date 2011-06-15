@@ -22,39 +22,42 @@
 
 package org.jboss.as.ejb3.deployment.processors.dd;
 
+import org.jboss.as.ee.component.DeploymentDescriptorEnvironment;
+import org.jboss.as.ee.component.EEModuleClassDescription;
 import org.jboss.as.ee.component.EEModuleDescription;
-import org.jboss.as.ejb3.component.EJBMethodDescription;
+import org.jboss.as.ejb3.component.EJBComponentDescription;
 import org.jboss.as.ejb3.component.MethodIntf;
 import org.jboss.as.ejb3.component.session.SessionBeanComponentDescription;
 import org.jboss.as.ejb3.component.singleton.SingletonComponentDescription;
 import org.jboss.as.ejb3.component.stateful.StatefulComponentDescription;
-import org.jboss.as.ejb3.component.stateless.StatelessComponentDescription;
-import org.jboss.as.ejb3.deployment.EjbJarDescription;
+import org.jboss.as.ejb3.component.stateful.StatefulTimeoutInfo;
 import org.jboss.as.ejb3.deployment.EjbDeploymentAttachmentKeys;
+import org.jboss.as.ejb3.deployment.EjbJarDescription;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.as.server.deployment.DeploymentUnit;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
+import org.jboss.invocation.proxy.MethodIdentifier;
 import org.jboss.logging.Logger;
 import org.jboss.metadata.ejb.spec.AccessTimeoutMetaData;
+import org.jboss.metadata.ejb.spec.AroundInvokeMetaData;
 import org.jboss.metadata.ejb.spec.BusinessLocalsMetaData;
 import org.jboss.metadata.ejb.spec.BusinessRemotesMetaData;
-import org.jboss.metadata.ejb.spec.ConcurrentMethodMetaData;
-import org.jboss.metadata.ejb.spec.ConcurrentMethodsMetaData;
 import org.jboss.metadata.ejb.spec.ContainerTransactionMetaData;
 import org.jboss.metadata.ejb.spec.ContainerTransactionsMetaData;
 import org.jboss.metadata.ejb.spec.MethodMetaData;
 import org.jboss.metadata.ejb.spec.MethodParametersMetaData;
 import org.jboss.metadata.ejb.spec.MethodsMetaData;
-import org.jboss.metadata.ejb.spec.NamedMethodMetaData;
 import org.jboss.metadata.ejb.spec.SessionBean31MetaData;
 import org.jboss.metadata.ejb.spec.SessionBeanMetaData;
-import org.jboss.metadata.ejb.spec.SessionType;
+import org.jboss.metadata.ejb.spec.StatefulTimeoutMetaData;
+import org.jboss.metadata.javaee.spec.LifecycleCallbackMetaData;
 
 import javax.ejb.AccessTimeout;
 import javax.ejb.ConcurrencyManagementType;
 import javax.ejb.LockType;
 import javax.ejb.TransactionAttributeType;
 import javax.ejb.TransactionManagementType;
+import javax.interceptor.InvocationContext;
 import java.lang.annotation.Annotation;
 import java.util.concurrent.TimeUnit;
 
@@ -91,26 +94,11 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
         final EEModuleDescription moduleDescription = deploymentUnit.getAttachment(org.jboss.as.ee.component.Attachments.EE_MODULE_DESCRIPTION);
         final String applicationName = moduleDescription.getApplicationName();
 
-        SessionType sessionType = sessionBean.getSessionType();
-        if (sessionType == null) {
-            throw new DeploymentUnitProcessingException("Unknown session-type for session bean: " + sessionBean.getName() + " in deployment unit: " + deploymentUnit);
-        }
-        String beanName = sessionBean.getName();
-        String beanClassName = sessionBean.getEjbClass();
-        SessionBeanComponentDescription sessionBeanDescription = null;
-        switch (sessionType) {
-            case Stateless:
-                sessionBeanDescription = new StatelessComponentDescription(beanName, beanClassName, ejbJarDescription, deploymentUnit.getServiceName());
-                break;
-            case Stateful:
-                sessionBeanDescription = new StatefulComponentDescription(beanName, beanClassName, ejbJarDescription, deploymentUnit.getServiceName());
-                break;
-            case Singleton:
-                sessionBeanDescription = new SingletonComponentDescription(beanName, beanClassName, ejbJarDescription, deploymentUnit.getServiceName());
-                break;
-            default:
-                throw new IllegalArgumentException("Unknown session bean type: " + sessionType);
-        }
+        final String beanName = sessionBean.getName();
+        final SessionBeanComponentDescription sessionBeanDescription = (SessionBeanComponentDescription) moduleDescription.getComponentByName(beanName);
+
+        sessionBeanDescription.setDeploymentDescriptorEnvironment(new DeploymentDescriptorEnvironment("java:comp/env/", sessionBean));
+
         // mapped-name
         sessionBeanDescription.setMappedName(sessionBean.getMappedName());
         // local business interface views
@@ -131,6 +119,7 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
         if (sessionBean.getTransactionType() != TransactionManagementType.BEAN) {
             ContainerTransactionsMetaData containerTransactions = sessionBean.getContainerTransactions();
             if (containerTransactions != null && !containerTransactions.isEmpty()) {
+                final String className = null; // applies to any class
                 for (ContainerTransactionMetaData containerTx : containerTransactions) {
                     TransactionAttributeType txAttr = containerTx.getTransAttribute();
                     MethodsMetaData methods = containerTx.getMethods();
@@ -138,12 +127,12 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
                         String methodName = method.getMethodName();
                         MethodIntf methodIntf = this.getMethodIntf(method.getMethodIntf());
                         if (methodName.equals("*")) {
-                            sessionBeanDescription.setTransactionAttribute(methodIntf, txAttr);
+                            sessionBeanDescription.setTransactionAttribute(methodIntf, className, txAttr);
                         } else {
 
                             MethodParametersMetaData methodParams = method.getMethodParams();
                             // update the session bean description with the tx attribute info
-                            sessionBeanDescription.setTransactionAttribute(methodIntf, txAttr, methodName, this.getMethodParams(methodParams));
+                            sessionBeanDescription.setTransactionAttribute(methodIntf, txAttr, className, methodName, this.getMethodParams(methodParams));
                         }
                     }
                 }
@@ -157,11 +146,64 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
         if (sessionBean instanceof SessionBean31MetaData) {
             this.processSessionBean31((SessionBean31MetaData) sessionBean, sessionBeanDescription);
         }
+    }
 
-        // Add this component description to the module description
-        ejbJarDescription.getEEModuleDescription().addComponent(sessionBeanDescription);
+    private static void processSessionSynchronization(final SessionBean31MetaData metaData, final SessionBeanComponentDescription sessionBeanComponentDescription) {
+        if (!(sessionBeanComponentDescription instanceof StatefulComponentDescription))
+            return;
+        final StatefulComponentDescription description = (StatefulComponentDescription) sessionBeanComponentDescription;
+
+        if (metaData.getAfterBeginMethod() != null)
+            description.setAfterBegin(null, metaData.getAfterBeginMethod().getMethodName());
+        if (metaData.getAfterCompletionMethod() != null)
+            description.setAfterCompletion(null, metaData.getAfterCompletionMethod().getMethodName());
+        if (metaData.getBeforeCompletionMethod() != null)
+            description.setBeforeCompletion(null, metaData.getBeforeCompletionMethod().getMethodName());
+    }
+
+    protected void processInterceptors(SessionBeanMetaData enterpriseBean, EJBComponentDescription ejbComponentDescription) {
+
+        //for interceptor methods that specify a null class we cannot deal with them here
+        //instead we stick them on the component configuration, and deal with them once we have a module
+
+        if (enterpriseBean.getAroundInvokes() != null) {
+            for (AroundInvokeMetaData interceptor : enterpriseBean.getAroundInvokes()) {
+
+                if (interceptor.getClassName() == null) {
+                    ejbComponentDescription.getAroundInvokeDDMethods().add(interceptor.getMethodName());
+                } else {
+                    EEModuleClassDescription interceptorModuleClassDescription = ejbComponentDescription.getModuleDescription().getOrAddClassByName(interceptor.getClassName());
+                    final MethodIdentifier identifier = MethodIdentifier.getIdentifier(Object.class, interceptor.getMethodName(), InvocationContext.class);
+                    interceptorModuleClassDescription.setAroundInvokeMethod(identifier);
+                }
+            }
+        }
+        if (enterpriseBean.getPreDestroys() != null) {
+            for (LifecycleCallbackMetaData interceptor : enterpriseBean.getPreDestroys()) {
+                if (interceptor.getClassName() == null) {
+                    ejbComponentDescription.getPreDestroyDDMethods().add(interceptor.getMethodName());
+                } else {
+                    final EEModuleClassDescription interceptorModuleClassDescription = ejbComponentDescription.getModuleDescription().getOrAddClassByName(interceptor.getClassName());
+                    final MethodIdentifier identifier = MethodIdentifier.getIdentifier(Object.class, interceptor.getMethodName(), InvocationContext.class);
+                    interceptorModuleClassDescription.setPreDestroyMethod(identifier);
+                }
+            }
+        }
+
+        if (enterpriseBean.getPostConstructs() != null) {
+            for (LifecycleCallbackMetaData interceptor : enterpriseBean.getPostConstructs()) {
+                if (interceptor.getClassName() == null) {
+                    ejbComponentDescription.getPostConstructDDMethods().add(interceptor.getMethodName());
+                } else {
+                    final EEModuleClassDescription interceptorModuleClassDescription = ejbComponentDescription.getModuleDescription().getOrAddClassByName(interceptor.getClassName());
+                    final MethodIdentifier identifier = MethodIdentifier.getIdentifier(Object.class, interceptor.getMethodName(), InvocationContext.class);
+                    interceptorModuleClassDescription.setPostConstructMethod(identifier);
+                }
+            }
+        }
 
     }
+
 
     private void processSessionBean31(SessionBean31MetaData sessionBean31MetaData, SessionBeanComponentDescription sessionBeanComponentDescription) {
         // no-interface view
@@ -172,6 +214,22 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
         if (sessionBean31MetaData.isSingleton() && sessionBeanComponentDescription instanceof SingletonComponentDescription) {
             this.processSingletonBean(sessionBean31MetaData, (SingletonComponentDescription) sessionBeanComponentDescription);
         }
+        if(sessionBean31MetaData.isStateful() && sessionBeanComponentDescription instanceof StatefulComponentDescription) {
+            processStatefulBean(sessionBean31MetaData, (StatefulComponentDescription)sessionBeanComponentDescription);
+        }
+
+        processSessionSynchronization(sessionBean31MetaData, sessionBeanComponentDescription);
+    }
+
+    private void processStatefulBean(final SessionBean31MetaData sessionBean31MetaData, final StatefulComponentDescription sessionBeanComponentDescription) {
+        final StatefulTimeoutMetaData statefulTimeout = sessionBean31MetaData.getStatefulTimeout();
+        if(statefulTimeout != null) {
+            TimeUnit unit = TimeUnit.MINUTES;
+            if(statefulTimeout.getUnit()!=null) {
+                unit = statefulTimeout.getUnit();
+            }
+            sessionBeanComponentDescription.setStatefulTimeout(new StatefulTimeoutInfo(statefulTimeout.getTimeout(), unit));
+        }
     }
 
     private void processSingletonBean(SessionBean31MetaData singletonBeanMetaData, SingletonComponentDescription singletonComponentDescription) {
@@ -181,16 +239,7 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
         }
         // bean level lock-type
         LockType lockType = singletonBeanMetaData.getLockType();
-        singletonComponentDescription.setBeanLevelLockType(lockType);
-        // add method level lock type to the description
-        ConcurrentMethodsMetaData concurrentMethods = singletonBeanMetaData.getConcurrentMethods();
-        if (concurrentMethods != null) {
-            for (ConcurrentMethodMetaData concurrentMethod : concurrentMethods) {
-                LockType methodLockType = concurrentMethod.getLockType();
-                EJBMethodDescription method = this.getEJBMethodDescription(concurrentMethod.getMethod());
-                singletonComponentDescription.setLockType(methodLockType, method);
-            }
-        }
+        singletonComponentDescription.setBeanLevelLockType(singletonComponentDescription.getEJBClassName(), lockType);
 
         // concurrency management type
         ConcurrencyManagementType concurrencyManagementType = singletonBeanMetaData.getConcurrencyManagementType();
@@ -222,19 +271,8 @@ public class SessionBeanXmlDescriptorProcessor extends AbstractEjbXmlDescriptorP
                     return AccessTimeout.class;
                 }
             };
-            singletonComponentDescription.setBeanLevelAccessTimeout(accessTimeout);
+            singletonComponentDescription.setBeanLevelAccessTimeout(singletonComponentDescription.getEJBClassName(), accessTimeout);
         }
     }
 
-    private EJBMethodDescription getEJBMethodDescription(NamedMethodMetaData namedMethodMetaData) {
-        if (namedMethodMetaData == null) {
-            return null;
-        }
-        String methodName = namedMethodMetaData.getMethodName();
-        MethodParametersMetaData methodParams = namedMethodMetaData.getMethodParams();
-        if (methodParams == null) {
-            return new EJBMethodDescription(methodName, (String[]) null);
-        }
-        return new EJBMethodDescription(methodName, methodParams.toArray(new String[methodParams.size()]));
-    }
 }

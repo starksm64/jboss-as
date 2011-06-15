@@ -25,9 +25,12 @@ package org.jboss.as.ee.component;
 import org.jboss.as.ee.naming.InjectedEENamespaceContextSelector;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,8 +40,13 @@ public final class EEModuleDescription {
     private final String applicationName;
     private volatile String moduleName;
     private final Map<String, ComponentDescription> componentsByName = new HashMap<String, ComponentDescription>();
-    private final Map<String, ComponentDescription> componentsByClassName = new HashMap<String, ComponentDescription>();
+    private final Map<String, List<ComponentDescription>> componentsByClassName = new HashMap<String, List<ComponentDescription>>();
     private final Map<String, EEModuleClassDescription> classesByName = new HashMap<String, EEModuleClassDescription>();
+    /**
+     * Resource injections that only get installed if a binding is set up
+     * See EE 5.4.1.3
+     */
+    private final Map<String, List<LazyResourceInjection>> lazyResourceInjections = new HashMap<String, List<LazyResourceInjection>>();
 
     private InjectedEENamespaceContextSelector namespaceContextSelector;
 
@@ -48,11 +56,40 @@ public final class EEModuleDescription {
      * Construct a new instance.
      *
      * @param applicationName the application name
-     * @param moduleName the module name
+     * @param moduleName      the module name
      */
     public EEModuleDescription(final String applicationName, final String moduleName) {
         this.applicationName = applicationName;
         this.moduleName = moduleName;
+    }
+
+    public void addLazyResourceInjection(LazyResourceInjection injection) {
+        //TODO: lazy binding and comp/module aliasing is not really compatible
+        String name = injection.getLocalContextName();
+        //we store all the bindings as absolute bindings
+        if (!name.startsWith("java:")) {
+            //there is the potential for both java:comp and java:module bindings to satisfy these injections
+            List<LazyResourceInjection> list = lazyResourceInjections.get("java:comp/env/" + name);
+            if (list == null) {
+                lazyResourceInjections.put("java:comp/env/" + name, list = new ArrayList<LazyResourceInjection>(1));
+            }
+            list.add(injection);
+            list = lazyResourceInjections.get("java:module/env/" + name);
+            if (list == null) {
+                lazyResourceInjections.put("java:module/env/" + name, list = new ArrayList<LazyResourceInjection>(1));
+            }
+            list.add(injection);
+        } else {
+            List<LazyResourceInjection> list = lazyResourceInjections.get(name);
+            if (list == null) {
+                lazyResourceInjections.put(name, list = new ArrayList<LazyResourceInjection>(1));
+            }
+            list.add(injection);
+        }
+    }
+
+    public Map<String, List<LazyResourceInjection>> getLazyResourceInjections() {
+        return lazyResourceInjections;
     }
 
     /**
@@ -72,11 +109,12 @@ public final class EEModuleDescription {
         if (componentsByName.containsKey(componentName)) {
             throw new IllegalArgumentException("A component named '" + componentName + "' is already defined in this module");
         }
-        if (componentsByClassName.containsKey(componentClassName)) {
-            throw new IllegalArgumentException("A component of class " + componentClassName + " is already defined in this module");
-        }
         componentsByName.put(componentName, description);
-        componentsByClassName.put(componentClassName, description);
+        List<ComponentDescription> list = componentsByClassName.get(componentClassName);
+        if(list == null) {
+            componentsByClassName.put(componentClassName, list = new ArrayList<ComponentDescription>(1));
+        }
+        list.add(description);
     }
 
     public void addClass(EEModuleClassDescription description) {
@@ -98,6 +136,10 @@ public final class EEModuleDescription {
         return moduleName;
     }
 
+    public boolean hasComponent(final String name) {
+        return componentsByName.containsKey(name);
+    }
+
     public void setModuleName(String moduleName) {
         this.moduleName = moduleName;
     }
@@ -106,8 +148,9 @@ public final class EEModuleDescription {
         return componentsByName.get(name);
     }
 
-    public ComponentDescription getComponentByClassName(String className) {
-        return componentsByClassName.get(className);
+    public List<ComponentDescription> getComponentsByClassName(String className) {
+        final List<ComponentDescription> ret = componentsByClassName.get(className);
+        return ret == null ? Collections.<ComponentDescription>emptyList() : ret;
     }
 
     public Collection<ComponentDescription> getComponentDescriptions() {
@@ -119,6 +162,9 @@ public final class EEModuleDescription {
     }
 
     public EEModuleClassDescription getOrAddClassByName(String name) {
+        if (name == null) {
+            throw new IllegalArgumentException("Name cannot be null");
+        }
         EEModuleClassDescription description = classesByName.get(name);
         if (description == null) {
             classesByName.put(name, description = new EEModuleClassDescription(name));

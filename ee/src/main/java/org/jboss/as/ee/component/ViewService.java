@@ -84,8 +84,8 @@ final class ViewService implements Service<ComponentView> {
             if (method.getName().equals("finalize") && method.getParameterTypes().length == 0) {
                 viewInterceptorFactories.put(method, DESTROY_INTERCEPTOR);
             } else {
-                viewInterceptorFactories.put(method, Interceptors.getChainedInterceptorFactory(viewConfiguration.getViewInterceptorDeque(method)));
-                clientInterceptorFactories.put(method, Interceptors.getChainedInterceptorFactory(viewConfiguration.getClientInterceptorDeque(method)));
+                viewInterceptorFactories.put(method, Interceptors.getChainedInterceptorFactory(viewConfiguration.getViewInterceptors(method)));
+                clientInterceptorFactories.put(method, Interceptors.getChainedInterceptorFactory(viewConfiguration.getClientInterceptors(method)));
             }
         }
         this.viewInterceptorFactories = viewInterceptorFactories;
@@ -127,10 +127,8 @@ final class ViewService implements Service<ComponentView> {
             final Map<Method, InterceptorFactory> viewInterceptorFactories = ViewService.this.viewInterceptorFactories;
             final Map<Method, Interceptor> viewEntryPoints = new IdentityHashMap<Method, Interceptor>(viewInterceptorFactories.size());
             factoryContext.getContextData().put(Component.class, component);
+            factoryContext.getContextData().put(ComponentView.class, this);
             factoryContext.getContextData().putAll(contextData);
-            //the post construct interceptors currently MUST be created first
-            //and in some cases the instance is attached in this create process
-            //TODO: this is probably not a good thing. {@see ManagedBeanCreateInterceptorFactory}
             final Interceptor postConstructInterceptor = viewPostConstruct.create(factoryContext);
 
             for (Method method : viewInterceptorFactories.keySet()) {
@@ -153,6 +151,11 @@ final class ViewService implements Service<ComponentView> {
 
         public Component getComponent() {
             return component;
+        }
+
+        @Override
+        public Class<?> getProxyClass() {
+            return proxyFactory.defineClass();
         }
 
         class ViewInstance implements ComponentViewInstance {

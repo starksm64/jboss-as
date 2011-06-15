@@ -25,17 +25,18 @@ package org.jboss.as.ejb3.component.messagedriven;
 import org.jboss.as.ee.component.ComponentConfiguration;
 import org.jboss.as.ee.component.ComponentConfigurator;
 import org.jboss.as.ee.component.ComponentDescription;
-import org.jboss.as.ee.component.EEModuleConfiguration;
+import org.jboss.as.ee.component.EEApplicationDescription;
 import org.jboss.as.ee.component.ViewConfiguration;
 import org.jboss.as.ee.component.ViewConfigurator;
 import org.jboss.as.ee.component.ViewDescription;
+import org.jboss.as.ee.component.interceptors.InterceptorOrder;
 import org.jboss.as.ejb3.component.EJBComponentDescription;
+import org.jboss.as.ejb3.component.EJBViewDescription;
 import org.jboss.as.ejb3.component.MethodIntf;
 import org.jboss.as.ejb3.component.pool.PooledInstanceInterceptor;
 import org.jboss.as.ejb3.deployment.EjbJarDescription;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
-import org.jboss.invocation.ImmediateInterceptorFactory;
 import org.jboss.msc.service.ServiceBuilder;
 import org.jboss.msc.service.ServiceName;
 
@@ -59,17 +60,11 @@ public class MessageDrivenComponentDescription extends EJBComponentDescription {
     }
 
     @Override
-    public ComponentConfiguration createConfiguration(EEModuleConfiguration moduleConfiguration) {
-        final ComponentConfiguration mdbComponentConfiguration = new ComponentConfiguration(this, moduleConfiguration.getClassConfiguration(getComponentClassName()));
+    public ComponentConfiguration createConfiguration(EEApplicationDescription applicationDescription) {
+        final ComponentConfiguration mdbComponentConfiguration = new ComponentConfiguration(this, applicationDescription.getClassConfiguration(getComponentClassName()));
         // setup the component create service
         mdbComponentConfiguration.setComponentCreateServiceFactory(new MessageDrivenComponentCreateServiceFactory());
         return mdbComponentConfiguration;
-    }
-
-    @Override
-    public MethodIntf getMethodIntf(String viewClassName) {
-        // an MDB doesn't expose a real view
-        return MethodIntf.BEAN;
     }
 
     String getMessageListenerInterfaceName() {
@@ -102,7 +97,7 @@ public class MessageDrivenComponentDescription extends EJBComponentDescription {
         }
         this.messageListenerInterfaceName = messageListenerInterfaceName;
         // add it to the view description
-        ViewDescription viewDescription = new ViewDescription(this, messageListenerInterfaceName);
+        ViewDescription viewDescription = new EJBViewDescription(this, messageListenerInterfaceName, MethodIntf.MESSAGE_ENDPOINT);
         this.getViews().add(viewDescription);
     }
 
@@ -131,7 +126,7 @@ public class MessageDrivenComponentDescription extends EJBComponentDescription {
         view.getConfigurators().add(new ViewConfigurator() {
             @Override
             public void configure(DeploymentPhaseContext context, ComponentConfiguration componentConfiguration, ViewDescription description, ViewConfiguration configuration) throws DeploymentUnitProcessingException {
-                configuration.addViewInterceptorToFront(PooledInstanceInterceptor.pooled());
+                configuration.addViewInterceptor(PooledInstanceInterceptor.pooled(), InterceptorOrder.View.ASSOCIATING_INTERCEPTOR);
             }
         });
 
@@ -143,7 +138,8 @@ public class MessageDrivenComponentDescription extends EJBComponentDescription {
         this.getConfigurators().add(new ComponentConfigurator() {
             @Override
             public void configure(DeploymentPhaseContext context, ComponentDescription description, ComponentConfiguration configuration) throws DeploymentUnitProcessingException {
-                configuration.getPostConstructInterceptors().addFirst(new ImmediateInterceptorFactory(new MessageDrivenInvocationContextInterceptor()));
+                configuration.addPostConstructInterceptor(MessageDrivenInvocationContextInterceptor.FACTORY, InterceptorOrder.ComponentPostConstruct.EJB_SESSION_CONTEXT_INTERCEPTOR);
+                configuration.addPreDestroyInterceptor(MessageDrivenInvocationContextInterceptor.FACTORY, InterceptorOrder.ComponentPostConstruct.EJB_SESSION_CONTEXT_INTERCEPTOR);
             }
         });
     }
@@ -153,8 +149,13 @@ public class MessageDrivenComponentDescription extends EJBComponentDescription {
         view.getConfigurators().add(new ViewConfigurator() {
             @Override
             public void configure(DeploymentPhaseContext context, ComponentConfiguration componentConfiguration, ViewDescription description, ViewConfiguration configuration) throws DeploymentUnitProcessingException {
-                configuration.addViewInterceptorToFront(new ImmediateInterceptorFactory(new MessageDrivenInvocationContextInterceptor()));
+                configuration.addViewInterceptor(MessageDrivenInvocationContextInterceptor.FACTORY, InterceptorOrder.View.INVOCATION_CONTEXT_INTERCEPTOR);
             }
         });
+    }
+
+    @Override
+    public boolean isMessageDriven() {
+        return true;
     }
 }

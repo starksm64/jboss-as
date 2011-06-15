@@ -22,14 +22,18 @@
 package org.jboss.as.ejb3.component.session;
 
 
+import org.jboss.as.ee.component.ComponentView;
+import org.jboss.as.ee.component.ComponentViewInstance;
 import org.jboss.as.ejb3.component.AsyncFutureInterceptor;
 import org.jboss.as.ejb3.component.AsyncVoidInterceptor;
 import org.jboss.as.ejb3.component.EJBComponent;
-import org.jboss.as.ejb3.component.EJBComponentCreateService;
+import org.jboss.as.ejb3.component.stateful.StatefulSessionComponent;
+import org.jboss.as.server.CurrentServiceRegistry;
 import org.jboss.as.threads.ThreadsServices;
 import org.jboss.ejb3.context.spi.SessionContext;
 import org.jboss.invocation.InterceptorContext;
 import org.jboss.logging.Logger;
+import org.jboss.msc.service.ServiceController;
 import org.jboss.msc.service.ServiceName;
 
 import javax.ejb.AccessTimeout;
@@ -40,6 +44,7 @@ import java.io.Serializable;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -53,53 +58,47 @@ public abstract class SessionBeanComponent extends EJBComponent implements org.j
 
     static final ServiceName ASYNC_EXECUTOR_SERVICE_NAME = ThreadsServices.EXECUTOR.append("ejb3-async");
 
-    protected AccessTimeout beanLevelAccessTimeout;
+    protected Map<String, AccessTimeout> beanLevelAccessTimeout;
     private final Set<Method> asynchronousMethods;
     protected Executor asyncExecutor;
+    private final Map<String, ServiceName> viewServices;
 
     /**
      * Construct a new instance.
      *
      * @param ejbComponentCreateService the component configuration
      */
-    protected SessionBeanComponent(final EJBComponentCreateService ejbComponentCreateService) {
+    protected SessionBeanComponent(final SessionBeanComponentCreateService ejbComponentCreateService) {
         super(ejbComponentCreateService);
+        viewServices = ejbComponentCreateService.getViewServices();
 
-//        AccessTimeout accessTimeout = ejbComponentCreateService.getBeanLevelAccessTimeout();
-//        // TODO: the configuration should always have an access timeout
-//        if (accessTimeout == null) {
-//            accessTimeout = new AccessTimeout() {
-//                @Override
-//                public long value() {
-//                    return 5;
-//                }
-//
-//                @Override
-//                public TimeUnit unit() {
-//                    return MINUTES;
-//                }
-//
-//                @Override
-//                public Class<? extends Annotation> annotationType() {
-//                    return AccessTimeout.class;
-//                }
-//            };
-//        }
-//        this.beanLevelAccessTimeout = accessTimeout;
+        this.beanLevelAccessTimeout = ejbComponentCreateService.getBeanAccessTimeout();
         this.asynchronousMethods = null; //ejbComponentCreateService.getAsynchronousMethods();
 //        this.asyncExecutor = (Executor) ejbComponentCreateService.getInjection(ASYNC_EXECUTOR_SERVICE_NAME).getValue();
     }
 
     @Override
     public <T> T getBusinessObject(SessionContext ctx, Class<T> businessInterface) throws IllegalStateException {
-//        final ComponentView view = getComponentView(businessInterface);
-//        if (view == null)
-//            throw new IllegalStateException("Stateful bean " + getComponentName() + " does not have a view " + businessInterface);
-//        // see SessionBeanComponentInstance
-//        Serializable sessionId = ((SessionBeanComponentInstance.SessionBeanComponentInstanceContext) ctx).getId();
-//        Object proxy = view.getViewForInstance(sessionId);
-//        return businessInterface.cast(proxy);
-        throw new RuntimeException("NYI");
+        if(businessInterface == null) {
+            throw new IllegalStateException("Business interface type cannot be null");
+        }
+
+        final Serializable sessionId = ((SessionBeanComponentInstance.SessionBeanComponentInstanceContext) ctx).getId();
+
+        if (viewServices.containsKey(businessInterface.getName())) {
+            final ServiceController<?> serviceController = CurrentServiceRegistry.getServiceRegistry().getRequiredService(viewServices.get(businessInterface.getName()));
+            final ComponentView view = (ComponentView) serviceController.getValue();
+            final ComponentViewInstance instance;
+            if(sessionId != null) {
+                instance = view.createInstance(Collections.<Object, Object>singletonMap(StatefulSessionComponent.SESSION_ATTACH_KEY, sessionId));
+            } else {
+                instance = view.createInstance();
+            }
+            return (T) instance.createProxy();
+        } else {
+            throw new IllegalStateException("View of type " + businessInterface + " not found on bean " + this);
+        }
+
     }
 
     @Override
@@ -113,21 +112,21 @@ public abstract class SessionBeanComponent extends EJBComponent implements org.j
     }
 
     /**
-     * Returns the {@link AccessTimeout} applicable to the bean
-     *
-     * @return
-     */
-    public AccessTimeout getAccessTimeout() {
-        return this.beanLevelAccessTimeout;
-    }
-
-    /**
      * Return the {@link Executor} used for asynchronous invocations.
      *
      * @return the async executor
      */
     public Executor getAsynchronousExecutor() {
         return asyncExecutor;
+    }
+
+    @Override
+    public boolean getRollbackOnly() throws IllegalStateException {
+        // NOT_SUPPORTED and NEVER will not have a transaction context, so we can ignore those
+        if (getCurrentTransactionAttribute() == TransactionAttributeType.SUPPORTS) {
+            throw new IllegalStateException("EJB 3.1 FR 13.6.2.9 getRollbackOnly is not allowed with SUPPORTS attribute");
+        }
+        return super.getRollbackOnly();
     }
 
     protected boolean isAsynchronous(final Method method) {
@@ -147,8 +146,6 @@ public abstract class SessionBeanComponent extends EJBComponent implements org.j
         }
         return false;
     }
-
-    public abstract Object invoke(Serializable sessionId, Map<String, Object> contextData, Class<?> invokedBusinessInterface, Method implMethod, Object[] args) throws Exception;
 
     protected Object invokeAsynchronous(final Method method, final InterceptorContext context) throws Exception {
         if (Void.TYPE.isAssignableFrom(method.getReturnType())) {
@@ -237,24 +234,11 @@ public abstract class SessionBeanComponent extends EJBComponent implements org.j
     }
 
     @Override
-    protected boolean isSetRollbackOnlyAllowed(TransactionAttributeType txAttrType) {
-        // EJB3.1 Spec, section 13.6.2.8
-        // setRollbackOnly on session beans is not allowed for NEVER, SUPPORTS and NOT_SUPPORTED tx attribute types.
-        if (txAttrType == TransactionAttributeType.NEVER || txAttrType == TransactionAttributeType.SUPPORTS ||
-                txAttrType == TransactionAttributeType.NOT_SUPPORTED) {
-            return false;
+    public void setRollbackOnly() throws IllegalStateException {
+        // NOT_SUPPORTED and NEVER will not have a transaction context, so we can ignore those
+        if (getCurrentTransactionAttribute() == TransactionAttributeType.SUPPORTS) {
+            throw new IllegalStateException("EJB 3.1 FR 13.6.2.9 getRollbackOnly is not allowed with SUPPORTS attribute");
         }
-        return true;
-    }
-
-    @Override
-    protected boolean isGetRollbackOnlyAllowed(TransactionAttributeType txAttrType) {
-        // EJB3.1 Spec, section 13.6.2.9
-        // getRollbackOnly on session beans is not allowed for NEVER, SUPPORTS and NOT_SUPPORTED tx attribute types.
-        if (txAttrType == TransactionAttributeType.NEVER || txAttrType == TransactionAttributeType.SUPPORTS ||
-                txAttrType == TransactionAttributeType.NOT_SUPPORTED) {
-            return false;
-        }
-        return true;
+        super.setRollbackOnly();
     }
 }

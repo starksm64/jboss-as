@@ -23,6 +23,7 @@ package org.jboss.as.ejb3.deployment.processors;
 
 import org.jboss.as.ee.component.ViewDescription;
 import org.jboss.as.ejb3.component.EJBComponentDescription;
+import org.jboss.as.ejb3.component.EJBViewDescription;
 import org.jboss.as.ejb3.component.MethodIntf;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
 import org.jboss.as.server.deployment.annotation.CompositeIndex;
@@ -86,22 +87,27 @@ public class TransactionAttributeAnnotationProcessor extends AbstractAnnotationE
             TransactionAttributeType transactionAttributeType = TransactionAttributeType.valueOf(annotationInstance.value().asEnum());
             if (target instanceof ClassInfo) {
                 // Style 1
-                componentDescription.setTransactionAttribute(methodIntf, transactionAttributeType);
+                final String className = target.toString();
+                componentDescription.setTransactionAttribute(methodIntf, methodIntf == null ? className : null, transactionAttributeType);
             } else if (target instanceof MethodInfo) {
                 // Style 3
                 final MethodInfo method = (MethodInfo) target;
-                componentDescription.setTransactionAttribute(methodIntf, transactionAttributeType, method.name(), toString(method.args()));
+                final String className = method.declaringClass().toString();
+                componentDescription.setTransactionAttribute(methodIntf, transactionAttributeType, className, method.name(), toString(method.args()));
             }
         }
     }
 
     private void processViewAnnotations(CompositeIndex index, EJBComponentDescription ejbComponentDescription) throws DeploymentUnitProcessingException {
+        EJBViewDescription ejbViewDescription = null;
         for (ViewDescription viewDescription : ejbComponentDescription.getViews()) {
+            ejbViewDescription = (EJBViewDescription) viewDescription;
             String viewClassName = viewDescription.getViewClassName();
-            MethodIntf methodIntf = ejbComponentDescription.getMethodIntf(viewClassName);
+            MethodIntf methodIntf = ejbViewDescription.getMethodIntf();
             ClassInfo viewClass = index.getClassByName(DotName.createSimple(viewClassName));
-            if (viewClass != null)
+            if (viewClass != null) {
                 processClassAnnotations(viewClass, methodIntf, index, ejbComponentDescription);
+            }
         }
     }
 

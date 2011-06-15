@@ -25,7 +25,7 @@ import javax.ejb.Stateless;
 
 import junit.framework.Assert;
 
-import org.jboss.arquillian.api.Deployment;
+import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.shrinkwrap.api.Archive;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
@@ -45,7 +45,7 @@ public class WarChildFirstClassLoadingTestCase {
 
     @Test
     public void testChildFirst() throws ClassNotFoundException {
-        Assert.assertEquals(Stateless.class.getClassLoader(), getClass().getClassLoader());
+        Assert.assertNotSame(Stateless.class.getClassLoader(), getClass().getClassLoader());
     }
 
 }

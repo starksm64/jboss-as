@@ -26,8 +26,10 @@ import org.jboss.as.ee.component.ComponentInstance;
 import org.jboss.as.ejb3.component.stateful.StatefulSessionComponentInstance;
 import org.jboss.as.jpa.container.SFSBCallStack;
 import org.jboss.as.jpa.ejb3.SFSBContextHandleImpl;
+import org.jboss.invocation.ImmediateInterceptorFactory;
 import org.jboss.invocation.Interceptor;
 import org.jboss.invocation.InterceptorContext;
+import org.jboss.invocation.InterceptorFactory;
 
 /**
  * Stateful session bean Invocation interceptor that is responsible for the SFSBCallStack being set for each
@@ -37,7 +39,10 @@ import org.jboss.invocation.InterceptorContext;
  */
 public class SFSBInvocationInterceptor implements Interceptor {
 
-    public static final SFSBInvocationInterceptor INSTANCE = new SFSBInvocationInterceptor();
+    public static final InterceptorFactory FACTORY = new ImmediateInterceptorFactory(new SFSBInvocationInterceptor());
+
+    protected SFSBInvocationInterceptor() {
+    }
 
     @Override
     public Object processInvocation(InterceptorContext context) throws Exception {
@@ -45,14 +50,13 @@ public class SFSBInvocationInterceptor implements Interceptor {
         if (componentInstance == null) {
             throw new IllegalStateException("componentInstance not set in InterceptorContext: " + context);
         }
-        StatefulSessionComponentInstance sfsb = (StatefulSessionComponentInstance)componentInstance;
+        StatefulSessionComponentInstance sfsb = (StatefulSessionComponentInstance) componentInstance;
         SFSBContextHandleImpl sfsbContextHandle = new SFSBContextHandleImpl(sfsb);
 
         SFSBCallStack.pushCall(sfsbContextHandle);
         try {
             return context.proceed();   // call the next interceptor or target
-        }
-        finally {
+        } finally {
             SFSBCallStack.popCall();
         }
     }

@@ -25,13 +25,17 @@ package org.jboss.as.ejb3.component;
 import org.jboss.as.ee.component.BasicComponentCreateService;
 import org.jboss.as.ee.component.ComponentConfiguration;
 import org.jboss.as.ee.component.ViewConfiguration;
+import org.jboss.as.ee.component.ViewDescription;
 import org.jboss.as.ejb3.deployment.EjbJarConfiguration;
+import org.jboss.msc.service.ServiceName;
 
 import javax.ejb.TransactionAttributeType;
 import javax.ejb.TransactionManagementType;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -46,6 +50,10 @@ public class EJBComponentCreateService extends BasicComponentCreateService {
 
     private final EjbJarConfiguration ejbJarConfiguration;
 
+    private final Map<String, ServiceName> viewServices;
+
+    private final ComponentConfiguration componentConfiguration;
+
     /**
      * Construct a new instance.
      *
@@ -53,6 +61,8 @@ public class EJBComponentCreateService extends BasicComponentCreateService {
      */
     public EJBComponentCreateService(final ComponentConfiguration componentConfiguration, final EjbJarConfiguration ejbJarConfiguration) {
         super(componentConfiguration);
+
+        this.componentConfiguration = componentConfiguration;
 
         this.ejbJarConfiguration = ejbJarConfiguration;
 
@@ -69,20 +79,41 @@ public class EJBComponentCreateService extends BasicComponentCreateService {
         List<ViewConfiguration> views = componentConfiguration.getViews();
         if (views != null) {
             for (ViewConfiguration view : views) {
-                final MethodIntf viewType = ejbComponentDescription.getMethodIntf(view.getViewClass().getName());
+                final EJBViewConfiguration ejbView = (EJBViewConfiguration) view;
+                final MethodIntf viewType = ejbView.getMethodIntf();
                 for (Method method : view.getProxyFactory().getCachedMethods()) {
-                    this.processTxAttr(ejbComponentDescription, viewType, method);
+                    // TODO: proxy factory exposes non-public methods, is this a bug in the no-interface view?
+                    if (!Modifier.isPublic(method.getModifiers()))
+                        continue;
+                    final Method componentMethod = getComponentMethod(componentConfiguration, method.getName(), method.getParameterTypes());
+                    this.processTxAttr(ejbComponentDescription, viewType, componentMethod);
                 }
             }
         }
         // FIXME: TODO: a temporary measure until EJBTHREE-2120 is fully resolved, let's create tx attribute map
         // for the component methods. Once the issue is resolved, we should get rid of this block and just rely on setting
         // up the tx attributes only for the views exposed by this component
-        Set<Method> componentMethods = componentConfiguration.getDefinedComponentMethods();
-        if (componentMethods != null) {
-            for (Method method : componentMethods) {
-                this.processTxAttr(ejbComponentDescription, MethodIntf.BEAN, method);
-            }
+        // AS7-899: We only want to process public methods of the proper sub-class. (getDefinedComponentMethods returns all in random order)
+        // TODO: use ClassReflectionIndex (low prio, because we store the result without class name) (which is a bug: AS7-905)
+        for (Method method : componentConfiguration.getComponentClass().getMethods()) {
+            this.processTxAttr(ejbComponentDescription, MethodIntf.BEAN, method);
+        }
+        final HashMap<String, ServiceName> viewServices = new HashMap<String, ServiceName>();
+        for(ViewDescription view : componentConfiguration.getComponentDescription().getViews()) {
+            viewServices.put(view.getViewClassName(), view.getServiceName());
+        }
+        this.viewServices = viewServices;
+    }
+
+    public ComponentConfiguration getComponentConfiguration() {
+        return componentConfiguration;
+    }
+
+    private static Method getComponentMethod(final ComponentConfiguration componentConfiguration, final String name, final Class<?>[] parameterTypes) {
+        try {
+            return componentConfiguration.getComponentClass().getMethod(name, parameterTypes);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -104,8 +135,9 @@ public class EJBComponentCreateService extends BasicComponentCreateService {
             return;
         }
 
+        String className = method.getDeclaringClass().getName();
         String methodName = method.getName();
-        TransactionAttributeType txAttr = ejbComponentDescription.getTransactionAttribute(methodIntf, methodName, toString(method.getParameterTypes()));
+        TransactionAttributeType txAttr = ejbComponentDescription.getTransactionAttribute(methodIntf, className, methodName, toString(method.getParameterTypes()));
 
         ConcurrentMap<String, ConcurrentMap<ArrayKey, TransactionAttributeType>> perMethodIntf = this.txAttrs.get(methodIntf);
         if (perMethodIntf == null) {
@@ -128,5 +160,7 @@ public class EJBComponentCreateService extends BasicComponentCreateService {
         return result;
     }
 
-
+    public Map<String, ServiceName> getViewServices() {
+        return viewServices;
+    }
 }

@@ -30,7 +30,7 @@ import static org.jboss.as.osgi.parser.CommonAttributes.CONFIGURATION_PROPERTIES
 import static org.jboss.as.osgi.parser.CommonAttributes.MODULES;
 import static org.jboss.as.osgi.parser.CommonAttributes.PID;
 import static org.jboss.as.osgi.parser.CommonAttributes.PROPERTIES;
-import static org.jboss.as.osgi.parser.CommonAttributes.START;
+import static org.jboss.as.osgi.parser.CommonAttributes.STARTLEVEL;
 
 import java.util.Hashtable;
 import java.util.Set;
@@ -49,7 +49,7 @@ import org.jboss.as.osgi.parser.SubsystemState.Activation;
 import org.jboss.as.osgi.parser.SubsystemState.OSGiModule;
 import org.jboss.as.osgi.service.ConfigAdminServiceImpl;
 import org.jboss.as.osgi.service.FrameworkBootstrapService;
-import org.jboss.as.osgi.service.InstallHandlerIntegration;
+import org.jboss.as.osgi.service.BundleInstallProviderIntegration;
 import org.jboss.as.server.BootOperationContext;
 import org.jboss.as.server.BootOperationHandler;
 import org.jboss.dmr.ModelNode;
@@ -86,25 +86,22 @@ class OSGiSubsystemAdd implements ModelAddOperationHandler, BootOperationHandler
                 public void execute(RuntimeTaskContext context) throws OperationFailedException {
                     log.infof("Activating OSGi Subsystem");
                     long begin = System.currentTimeMillis();
-                    SubsystemState subsystemState = createSubsystemState(operation);
+                    try {
+                        SubsystemState subsystemState = createSubsystemState(operation);
 
-                    // TODO: Hack, which registers the framework module with the {@link ModularURLStreamHandlerFactory}
-                    String value = SecurityActions.getSystemProperty("jboss.protocol.handler.modules", "org.jboss.osgi.framework");
-                    if (!value.equals("org.jboss.osgi.framework")) {
-                        value = value + "|org.jboss.osgi.framework";
+                        ServiceTarget serviceTarget = context.getServiceTarget();
+                        BundleStartTracker.addService(serviceTarget);
+                        BundleInstallProviderIntegration.addService(serviceTarget);
+                        FrameworkBootstrapService.addService(serviceTarget, subsystemState);
+
+                        ConfigAdminServiceImpl.addService(serviceTarget, subsystemState);
+
+                        new OSGiDeploymentActivator().activate(updateContext);
+                        resultHandler.handleResultComplete();
+                    } catch (RuntimeException rte) {
+                        log.errorf(rte, "Failed to activate OSGi subsystem");
+                        throw rte;
                     }
-                    SecurityActions.setSystemProperty("jboss.protocol.handler.modules", value);
-
-                    ServiceTarget serviceTarget = context.getServiceTarget();
-                    BundleStartTracker.addService(serviceTarget);
-                    InstallHandlerIntegration.addService(serviceTarget);
-                    FrameworkBootstrapService.addService(serviceTarget, subsystemState);
-
-                    ConfigAdminServiceImpl.addService(serviceTarget, subsystemState);
-
-                    new OSGiDeploymentActivator().activate(updateContext);
-                    resultHandler.handleResultComplete();
-
                     long end = System.currentTimeMillis();
                     log.debugf("Activated OSGi Subsystem in %dms", end - begin);
                 }
@@ -166,8 +163,9 @@ class OSGiSubsystemAdd implements ModelAddOperationHandler, BootOperationHandler
             Set<String> keys = modules.keys();
             if (keys != null) {
                 for (String current : keys) {
-                    String value = modules.get(current).get(START).asString();
-                    subsystemState.addModule(new OSGiModule(ModuleIdentifier.fromString(current), Boolean.parseBoolean(value)));
+                    ModelNode modelNode = modules.get(current).get(STARTLEVEL);
+                    Integer startLevel = modelNode.isDefined() ? modelNode.asInt() : null;
+                    subsystemState.addModule(new OSGiModule(ModuleIdentifier.fromString(current), startLevel));
                 }
             }
         }

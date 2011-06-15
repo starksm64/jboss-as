@@ -23,16 +23,18 @@
 package org.jboss.as.ee.component;
 
 import org.jboss.as.naming.ManagedReferenceFactory;
-import org.jboss.invocation.InterceptorFactory;
+import org.jboss.as.server.deployment.reflect.DeploymentReflectionIndex;
 import org.jboss.msc.service.ServiceName;
 import org.jboss.msc.value.InjectedValue;
 
-import java.util.ArrayDeque;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Configuration for a class in an EE module.  Each interceptor and component corresponds to one of these.
@@ -60,18 +62,10 @@ import java.util.Map;
  */
 public final class EEModuleClassConfiguration {
 
-    // Module
-    private final EEModuleConfiguration moduleConfiguration;
-
     private final EEModuleClassDescription moduleClassDescription;
 
     // Module class
     private final Class<?> moduleClass;
-
-    // Interceptors
-    private final Deque<InterceptorFactory> postConstructInterceptors = new ArrayDeque<InterceptorFactory>();
-    private final Deque<InterceptorFactory> preDestroyInterceptors = new ArrayDeque<InterceptorFactory>();
-    private final Deque<InterceptorFactory> aroundInvokeInterceptors = new ArrayDeque<InterceptorFactory>();
 
     // JNDI bindings
     private final List<BindingConfiguration> bindingConfigurations = new ArrayList<BindingConfiguration>();
@@ -83,19 +77,17 @@ public final class EEModuleClassConfiguration {
     // Instantiation
     private ManagedReferenceFactory instantiator;
 
-    EEModuleClassConfiguration(final Class<?> moduleClass, final EEModuleConfiguration moduleConfiguration, EEModuleClassDescription moduleClassDescription) {
-        this.moduleClass = moduleClass;
-        this.moduleConfiguration = moduleConfiguration;
-        this.moduleClassDescription = moduleClassDescription;
-    }
+    private final DeploymentReflectionIndex deploymentReflectionIndex;
 
     /**
-     * Get the EE module configuration corresponding to this class configuration.
-     *
-     * @return the module configuration
+     * Lazily initialized set of all methods on the class, taken from the deployment reflection index.
      */
-    public EEModuleConfiguration getModuleConfiguration() {
-        return moduleConfiguration;
+    private volatile Set<Method> classMethods;
+
+    public EEModuleClassConfiguration(final Class<?> moduleClass, EEModuleClassDescription moduleClassDescription, final DeploymentReflectionIndex deploymentReflectionIndex) {
+        this.moduleClass = moduleClass;
+        this.moduleClassDescription = moduleClassDescription;
+        this.deploymentReflectionIndex = deploymentReflectionIndex;
     }
 
     /**
@@ -105,33 +97,6 @@ public final class EEModuleClassConfiguration {
      */
     public Class<?> getModuleClass() {
         return moduleClass;
-    }
-
-    /**
-     * Get the post-construct interceptor deque.
-     *
-     * @return the deque
-     */
-    public Deque<InterceptorFactory> getPostConstructInterceptors() {
-        return postConstructInterceptors;
-    }
-
-    /**
-     * Get the pre-destroy interceptor deque.
-     *
-     * @return the deque
-     */
-    public Deque<InterceptorFactory> getPreDestroyInterceptors() {
-        return preDestroyInterceptors;
-    }
-
-    /**
-     * Get the around-invoke interceptor deque.
-     *
-     * @return the deque
-     */
-    public Deque<InterceptorFactory> getAroundInvokeInterceptors() {
-        return aroundInvokeInterceptors;
     }
 
     /**
@@ -168,6 +133,23 @@ public final class EEModuleClassConfiguration {
      */
     public ManagedReferenceFactory getInstantiator() {
         return instantiator;
+    }
+
+    public Set<Method> getClassMethods() {
+        if (classMethods == null) {
+            synchronized (this) {
+                if (classMethods == null) {
+                    final Set<Method> methods = Collections.newSetFromMap(new IdentityHashMap<Method, Boolean>());
+                    Class<?> clazz = this.moduleClass;
+                    while (clazz != null) {
+                        methods.addAll(deploymentReflectionIndex.getClassIndex(clazz).getMethods());
+                        clazz = clazz.getSuperclass();
+                    }
+                    this.classMethods = methods;
+                }
+            }
+        }
+        return classMethods;
     }
 
     /**

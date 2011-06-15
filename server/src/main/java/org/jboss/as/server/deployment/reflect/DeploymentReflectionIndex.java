@@ -27,7 +27,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * A reflection index for a deployment.  Not safe for multi-threaded access.
+ * A reflection index for a deployment.
  *
  * @author <a href="mailto:david.lloyd@redhat.com">David M. Lloyd</a>
  */
@@ -58,12 +58,16 @@ public final class DeploymentReflectionIndex {
      * @param clazz the class
      * @return the index
      */
-    @SuppressWarnings( { "unchecked" })
+    @SuppressWarnings({"unchecked"})
     public synchronized <T> ClassReflectionIndex<T> getClassIndex(Class<T> clazz) {
-        ClassReflectionIndex<T> index = (ClassReflectionIndex<T>) classes.get(clazz);
-        if (index == null) {
-            classes.put(clazz, index = new ClassReflectionIndex<T>(clazz, this));
+        try {
+            ClassReflectionIndex<T> index = (ClassReflectionIndex<T>) classes.get(clazz);
+            if (index == null) {
+                classes.put(clazz, index = new ClassReflectionIndex<T>(clazz, this));
+            }
+            return index;
+        } catch (Throwable e) {
+            throw new RuntimeException("Error getting reflective information for class " + clazz, e);
         }
-        return index;
     }
 }

@@ -87,7 +87,6 @@ public abstract class AbstractDataSourceAdd implements ModelAddOperationHandler 
         } else {
             jndiName = rawJndiName;
         }
-        final AbstractDataSourceService dataSourceService = createDataSourceService(jndiName, operation);
 
         if (context.getRuntimeContext() != null) {
             context.getRuntimeContext().setRuntimeTask(new RuntimeTask() {
@@ -97,7 +96,10 @@ public abstract class AbstractDataSourceAdd implements ModelAddOperationHandler 
 
                     boolean enabled = !operation.hasDefined(ENABLED) || operation.get(ENABLED).asBoolean();
 
+                    AbstractDataSourceService dataSourceService = createDataSourceService(jndiName);
+
                     final ServiceName dataSourceServiceName = AbstractDataSourceService.SERVICE_NAME_BASE.append(jndiName);
+
                     final ServiceBuilder<?> dataSourceServiceBuilder = serviceTarget
                             .addService(dataSourceServiceName, dataSourceService)
                             .addDependency(ConnectorServices.TRANSACTION_INTEGRATION_SERVICE, TransactionIntegration.class,
@@ -109,8 +111,12 @@ public abstract class AbstractDataSourceAdd implements ModelAddOperationHandler 
                             .addDependency(ConnectorServices.JDBC_DRIVER_REGISTRY_SERVICE, DriverRegistry.class,
                                     dataSourceService.getDriverRegistryInjector()).addDependency(NamingService.SERVICE_NAME);
 
-                    final String driverName = operation.require(DATASOURCE_DRIVER).asString();
-                    final ServiceName driverServiceName = ServiceName.JBOSS.append("jdbc-driver", driverName);
+                    startConfigAndAddDependency(dataSourceServiceBuilder, dataSourceService, jndiName, serviceTarget, operation);
+
+                     ModelNode node = operation.require(DATASOURCE_DRIVER);
+                    final String driverName = node.asString();
+                    final ServiceName driverServiceName = ServiceName.JBOSS.append("jdbc-driver",
+                            driverName.replaceAll(".", "_"));
                     if (driverServiceName != null) {
                         dataSourceServiceBuilder.addDependency(driverServiceName, Driver.class,
                                 dataSourceService.getDriverInjector());
@@ -170,14 +176,17 @@ public abstract class AbstractDataSourceAdd implements ModelAddOperationHandler 
         return new BasicOperationResult(compensating);
     }
 
+    protected abstract void startConfigAndAddDependency(ServiceBuilder<?> dataSourceServiceBuilder,
+            AbstractDataSourceService dataSourceService, String jndiName, ServiceTarget serviceTarget, final ModelNode operation)
+            throws OperationFailedException;
+
     protected abstract void populateModel(final ModelNode operation, final ModelNode model);
 
-    protected abstract AbstractDataSourceService createDataSourceService(final String jndiName, final ModelNode operation)
-            throws OperationFailedException;
+    protected abstract AbstractDataSourceService createDataSourceService(final String jndiName) throws OperationFailedException;
 
     static void populateAddModel(final ModelNode existingModel, final ModelNode newModel,
             final String connectionPropertiesProp, final AttributeDefinition[] attributes) {
-        if (existingModel.has(connectionPropertiesProp)) {
+        if (existingModel.hasDefined(connectionPropertiesProp)) {
             for (Property property : existingModel.get(connectionPropertiesProp).asPropertyList()) {
                 newModel.get(connectionPropertiesProp, property.getName()).set(property.getValue().asString());
             }

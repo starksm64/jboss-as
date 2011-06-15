@@ -41,12 +41,11 @@ import org.hornetq.api.core.client.ClientSession.QueueQuery;
 import org.hornetq.api.core.client.ClientSessionFactory;
 import org.hornetq.api.core.client.HornetQClient;
 import org.hornetq.core.remoting.impl.netty.NettyConnectorFactory;
-import org.jboss.arquillian.api.Deployment;
-import org.jboss.arquillian.api.Run;
-import org.jboss.arquillian.api.RunModeType;
+import org.jboss.arquillian.container.test.api.Deployment;
+import org.jboss.arquillian.container.test.api.RunAsClient;
 import org.jboss.arquillian.junit.Arquillian;
-import org.jboss.as.controller.client.OperationBuilder;
 import org.jboss.as.controller.client.ModelControllerClient;
+import org.jboss.as.controller.client.OperationBuilder;
 import org.jboss.as.test.modular.utils.ShrinkWrapUtils;
 import org.jboss.dmr.ModelNode;
 import org.jboss.shrinkwrap.api.Archive;
@@ -60,10 +59,10 @@ import org.junit.runner.RunWith;
  * @author Kabir Khan
  */
 @RunWith(Arquillian.class)
-@Run(RunModeType.AS_CLIENT)
+@RunAsClient
 public class MessagingClientTestCase {
 
-    @Deployment
+    @Deployment(testable = false)
     public static Archive<?> getEmptyDeployment() {
         return ShrinkWrapUtils.createEmptyJavaArchive("messaging-client.jar");
     }
@@ -156,12 +155,12 @@ public class MessagingClientTestCase {
         }
     }
 
-    static ClientSessionFactory createClientSessionFactory(String host, int port) {
+    static ClientSessionFactory createClientSessionFactory(String host, int port) throws Exception {
         final Map<String, Object> properties = new HashMap<String, Object>();
         properties.put("host", host);
         properties.put("port", port);
         final TransportConfiguration configuration = new TransportConfiguration(NettyConnectorFactory.class.getName(), properties);
-        return HornetQClient.createClientSessionFactory(configuration);
+        return HornetQClient.createServerLocatorWithoutHA(configuration).createSessionFactory();
     }
 
 }

@@ -21,6 +21,7 @@
  */
 package org.jboss.as.cli;
 
+
 /**
  *
  * @author Alexey Loubyansky
@@ -29,10 +30,17 @@ public interface CommandArgument {
 
     /**
      * The default name of the argument.
-     * An argument can have a few names, e.g. --force and -f.
+     * An argument can have more than one name, e.g. --force and -f.
+     * Full name can't be null.
      * @return  the default name of the argument.
      */
-    String getDefaultName();
+    String getFullName();
+
+    /**
+     * Short name of the argument if exists.
+     * @return short name of the argument or null if the short name doesn't exist.
+     */
+    String getShortName();
 
     /**
      * If the argument doesn't have a name its value can be found by index.
@@ -47,8 +55,9 @@ public interface CommandArgument {
      * Checks whether the argument is present on the command line.
      * @param args  parsed arguments
      * @return  true if the argument is present, false - otherwise.
+     * @throws CommandFormatException
      */
-    boolean isPresent(ParsedArguments args);
+    boolean isPresent(ParsedArguments args) throws CommandFormatException;
 
     /**
      * Checks whether the argument can appear on the command
@@ -56,7 +65,7 @@ public interface CommandArgument {
      * @param args  parsed arguments.
      * @return true if the argument can appear on the command line next, false - otherwise.
      */
-    boolean canAppearNext(CommandContext ctx);
+    boolean canAppearNext(CommandContext ctx) throws CommandFormatException;
 
     /**
      * Returns the value of the argument specified on the command line.
@@ -65,7 +74,18 @@ public interface CommandArgument {
      * @param args  parsed arguments.
      * @return  the value of the argument or null if the argument isn't present or is missing value.
      */
-    String getValue(ParsedArguments args);
+    String getValue(ParsedArguments args) throws CommandFormatException;
+
+    /**
+     * Returns the value of the argument specified on the command line.
+     * If the argument isn't specified and the value is not required null is returned.
+     * Otherwise an exception is thrown.
+     *
+     * @param args  parsed arguments.
+     * @param required  whether the value for this argument is required.
+     * @return  the value of the argument or null if the argument isn't present and the value is not required.
+     */
+    String getValue(ParsedArguments args, boolean required) throws CommandFormatException;
 
     /**
      * Checks whether the argument accepts value.

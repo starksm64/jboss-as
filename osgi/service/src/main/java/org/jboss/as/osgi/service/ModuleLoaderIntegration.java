@@ -27,6 +27,7 @@ import static org.jboss.as.server.moduleservice.ServiceModuleLoader.MODULE_SPEC_
 
 import java.util.List;
 
+import org.jboss.as.server.deployment.module.ModuleSpecification;
 import org.jboss.as.server.moduleservice.ServiceModuleLoader;
 import org.jboss.logging.Logger;
 import org.jboss.modules.DependencySpec;
@@ -35,7 +36,6 @@ import org.jboss.modules.ModuleIdentifier;
 import org.jboss.modules.ModuleLoadException;
 import org.jboss.modules.ModuleLoader;
 import org.jboss.modules.ModuleSpec;
-import org.jboss.msc.service.AbstractService;
 import org.jboss.msc.service.ServiceBuilder;
 import org.jboss.msc.service.ServiceContainer;
 import org.jboss.msc.service.ServiceController;
@@ -45,6 +45,8 @@ import org.jboss.msc.service.ServiceTarget;
 import org.jboss.msc.service.StartContext;
 import org.jboss.msc.service.StartException;
 import org.jboss.msc.service.StopContext;
+import org.jboss.msc.service.ValueService;
+import org.jboss.msc.value.ImmediateValue;
 import org.jboss.msc.value.InjectedValue;
 import org.jboss.osgi.framework.BundleManagerService;
 import org.jboss.osgi.framework.ModuleLoaderProvider;
@@ -56,7 +58,7 @@ import org.jboss.osgi.spi.NotImplementedException;
 /**
  * This is the single {@link ModuleLoader} that the OSGi layer uses for the modules that are associated with the bundles that
  * are registered with the {@link BundleManagerService}.
- *
+ * <p/>
  * Plain AS7 modules can create dependencies on OSGi deployments, because OSGi modules can also be loaded from the
  * {@link ServiceModuleLoader}
  *
@@ -85,14 +87,16 @@ final class ModuleLoaderIntegration extends ModuleLoader implements ModuleLoader
 
     @Override
     public void start(StartContext context) throws StartException {
-        log.debugf("Starting: %s", context.getController().getName());
+        ServiceController<?> controller = context.getController();
+        log.debugf("Starting: %s in mode %s", controller.getName(), controller.getMode());
         serviceContainer = context.getController().getServiceContainer();
         serviceTarget = context.getChildTarget();
     }
 
     @Override
     public void stop(StopContext context) {
-        log.debugf("Stopping: %s", context.getController().getName());
+        ServiceController<?> controller = context.getController();
+        log.debugf("Stopping: %s in mode %s", controller.getName(), controller.getMode());
     }
 
     @Override
@@ -111,34 +115,30 @@ final class ModuleLoaderIntegration extends ModuleLoader implements ModuleLoader
     @Override
     public void addModule(final ModuleSpec moduleSpec) {
         ModuleIdentifier identifier = moduleSpec.getModuleIdentifier();
-        ServiceName serviceName = ServiceModuleLoader.moduleSpecServiceName(identifier);
-        ServiceBuilder<ModuleSpec> builder = serviceTarget.addService(serviceName, new AbstractService<ModuleSpec>() {
-            public ModuleSpec getValue() throws IllegalStateException {
-                return moduleSpec;
-            }
-        });
-        builder.install();
+        log.debugf("Add module spec to loader: %s", identifier);
+
+        ServiceName moduleSpecName = ServiceModuleLoader.moduleSpecServiceName(identifier);
+        serviceTarget.addService(moduleSpecName, new ValueService<ModuleSpec>(new ImmediateValue<ModuleSpec>(moduleSpec))).install();
+
+        ServiceName moduleInfoName = ServiceModuleLoader.moduleInformationServiceName(identifier);
+        serviceTarget.addService(moduleInfoName, new ValueService<ModuleSpecification>(new ImmediateValue<ModuleSpecification>(new ModuleSpecification()))).install();
     }
 
     /**
      * Add an already loaded {@link Module} to the OSGi {@link ModuleLoader}. This happens when AS registers an existing
      * {@link Module} with the {@link BundleManagerService}.
-     *
+     * <p/>
      * The {@link Module} may not necessarily result from a user deployment. We use the same {@link ServiceName} convention as
      * in {@link ServiceModuleLoader#moduleServiceName(ModuleIdentifier)}
-     *
+     * <p/>
      * The {@link ServiceModuleLoader} cannot load these modules.
      */
     @Override
     public void addModule(final Module module) {
-        ServiceName serviceName = getModuleServiceName(module.getIdentifier());
-        if (serviceContainer.getService(serviceName) == null) {
-            ServiceBuilder<Module> builder = serviceTarget.addService(serviceName, new AbstractService<Module>() {
-                public Module getValue() throws IllegalStateException {
-                    return module;
-                }
-            });
-            builder.install();
+        ServiceName moduleServiceName = getModuleServiceName(module.getIdentifier());
+        if (serviceContainer.getService(moduleServiceName) == null) {
+            log.debugf("Add module to loader: %s", module.getIdentifier());
+            serviceTarget.addService(moduleServiceName, new ValueService<Module>(new ImmediateValue<Module>(module))).install();
         }
     }
 
@@ -150,19 +150,24 @@ final class ModuleLoaderIntegration extends ModuleLoader implements ModuleLoader
         ServiceName serviceName = getModuleSpecServiceName(identifier);
         ServiceController<?> controller = serviceContainer.getService(serviceName);
         if (controller != null) {
+            log.debugf("Remove module spec fom loader: %s", serviceName);
             controller.setMode(Mode.REMOVE);
         }
         serviceName = getModuleServiceName(identifier);
         controller = serviceContainer.getService(serviceName);
+        if (controller != null) {
+            log.debugf("Remove module fom loader: %s", serviceName);
+            controller.setMode(Mode.REMOVE);
+        }
+        controller = serviceContainer.getService(ServiceModuleLoader.moduleInformationServiceName(identifier));
         if (controller != null) {
             controller.setMode(Mode.REMOVE);
         }
     }
 
     /**
-     * Get the module identifier for the given {@link XModule}
-     * The returned identifier must be such that it can be used
-     * by the {@link ServiceModuleLoader}
+     * Get the module identifier for the given {@link XModule} The returned identifier must be such that it can be used by the
+     * {@link ServiceModuleLoader}
      */
     @Override
     public ModuleIdentifier getModuleIdentifier(XModule resModule) {
@@ -184,19 +189,19 @@ final class ModuleLoaderIntegration extends ModuleLoader implements ModuleLoader
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     protected ModuleSpec findModule(ModuleIdentifier identifier) throws ModuleLoadException {
-        ServiceName serviceName = ServiceModuleLoader.moduleSpecServiceName(identifier);
-        ServiceController<ModuleSpec> controller = (ServiceController<ModuleSpec>) serviceContainer.getService(serviceName);
-        return controller != null ? controller.getValue() : null;
+        ModuleSpec moduleSpec = injectedModuleLoader.getValue().findModule(identifier);
+        if (moduleSpec == null)
+            log.debugf("Cannot obtain module spec for: %s", identifier);
+        return moduleSpec;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     protected Module preloadModule(ModuleIdentifier identifier) throws ModuleLoadException {
-        ServiceName serviceName = getModuleServiceName(identifier);
-        ServiceController<Module> controller = (ServiceController<Module>) serviceContainer.getService(serviceName);
-        return controller != null ? controller.getValue() : ModuleLoader.preloadModule(identifier, injectedModuleLoader.getValue());
+        Module module = ModuleLoader.preloadModule(identifier, injectedModuleLoader.getValue());
+        if (module == null)
+            log.debugf("Cannot obtain module for: %s", identifier);
+        return module;
     }
 
     @Override

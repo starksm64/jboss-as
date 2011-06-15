@@ -22,13 +22,13 @@
 package org.jboss.as.cli.impl;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.jboss.as.cli.CommandLineException;
+import org.jboss.as.cli.CommandFormatException;
+import org.jboss.as.cli.CommandHandler;
 import org.jboss.as.cli.ParsedArguments;
 import org.jboss.as.cli.parsing.CommandLineParser;
 
@@ -36,25 +36,29 @@ import org.jboss.as.cli.parsing.CommandLineParser;
  *
  * @author Alexey Loubyansky
  */
-public class DefaultParsedArguments implements ParsedArguments {
+public class DefaultParsedArguments implements ParsedArguments, CommandLineParser.CallbackHandler {
 
     /** current command's arguments */
     private String argsStr;
     /** named command arguments */
-    private Map<String, String> namedArgs;
+    private Map<String, String> namedArgs = new HashMap<String, String>();
     /** other command arguments */
-    private List<String> otherArgs;
+    private List<String> otherArgs = new ArrayList<String>();
 
-    public void reset(String args) {
+    private CommandHandler handler;
+
+    private boolean parsed;
+
+    public void reset(String args, CommandHandler handler) {
         argsStr = args;
-        namedArgs = null;
-        otherArgs = null;
+        namedArgs.clear();
+        otherArgs.clear();
+        this.handler = handler;
+        parsed = false;
     }
 
-    public void parse(String args) {
-        argsStr = args;
-        namedArgs = null;
-        otherArgs = null;
+    public void parse(String args) throws CommandFormatException {
+        reset(args, null);
         parseArgs();
     }
 
@@ -70,8 +74,8 @@ public class DefaultParsedArguments implements ParsedArguments {
      * @see org.jboss.as.cli.ParsedArguments#hasArguments()
      */
     @Override
-    public boolean hasArguments() {
-        if(otherArgs == null) {
+    public boolean hasArguments() throws CommandFormatException {
+        if(!parsed) {
             parseArgs();
         }
         return !namedArgs.isEmpty() || !otherArgs.isEmpty();
@@ -81,8 +85,8 @@ public class DefaultParsedArguments implements ParsedArguments {
      * @see org.jboss.as.cli.ParsedArguments#hasArgument(java.lang.String)
      */
     @Override
-    public boolean hasArgument(String argName) {
-        if(namedArgs == null) {
+    public boolean hasArgument(String argName) throws CommandFormatException {
+        if(!parsed) {
             parseArgs();
         }
         return namedArgs.containsKey(argName);
@@ -92,8 +96,8 @@ public class DefaultParsedArguments implements ParsedArguments {
      * @see org.jboss.as.cli.ParsedArguments#getArgument(java.lang.String)
      */
     @Override
-    public String getArgument(String argName) {
-        if(namedArgs == null) {
+    public String getArgument(String argName) throws CommandFormatException {
+        if(!parsed) {
             parseArgs();
         }
         return namedArgs.get(argName);
@@ -103,8 +107,8 @@ public class DefaultParsedArguments implements ParsedArguments {
      * @see org.jboss.as.cli.ParsedArguments#getArgumentNames()
      */
     @Override
-    public Set<String> getArgumentNames() {
-        if(namedArgs == null) {
+    public Set<String> getArgumentNames() throws CommandFormatException {
+        if(!parsed) {
             parseArgs();
         }
         return namedArgs.keySet();
@@ -114,51 +118,32 @@ public class DefaultParsedArguments implements ParsedArguments {
      * @see org.jboss.as.cli.ParsedArguments#getOtherArguments()
      */
     @Override
-    public List<String> getOtherArguments() {
-        if(otherArgs == null) {
+    public List<String> getOtherArguments() throws CommandFormatException {
+        if(!parsed) {
             parseArgs();
         }
         return otherArgs;
     }
 
-    private void parseArgs() {
-        namedArgs = null;
-        otherArgs = null;
+    private void parseArgs() throws CommandFormatException {
         if (argsStr != null && !argsStr.isEmpty()) {
-            try {
-                CommandLineParser.parse(argsStr, new CommandLineParser.CallbackHandler() {
-                    @Override
-                    public void argument(String name, int nameStart, String value, int valueStart, int leaveIndex) {
-                        if(name != null) {
-                            if(namedArgs == null) {
-                                namedArgs = Collections.singletonMap(name, value);
-                            } else {
-                                if(namedArgs.size() == 1) {
-                                    namedArgs = new HashMap<String, String>(namedArgs);
-                                }
-                                namedArgs.put(name, value);
-                            }
-                        } else if(value != null) {
-                            if(otherArgs == null) {
-                                otherArgs = Collections.singletonList(value);
-                            } else {
-                                if(otherArgs.size() == 1) {
-                                    otherArgs = new ArrayList<String>(otherArgs);
-                                }
-                                otherArgs.add(value);
-                            }
-                        }
-                    }
-                });
-            } catch (CommandLineException e) {
-            }
+            CommandLineParser.parse(argsStr, this);
         }
+        parsed = true;
+    }
 
-        if(namedArgs == null) {
-            namedArgs = Collections.emptyMap();
-        }
-        if(otherArgs == null) {
-            otherArgs = Collections.emptyList();
+    @Override
+    public void argument(String name, int nameStart, String value, int valueStart, int end) throws CommandFormatException {
+        if(name != null) {
+            if(handler != null && !handler.hasArgument(name)) {
+                throw new CommandFormatException("Unexpected argument name '" + name + "'.");
+            }
+            namedArgs.put(name, value);
+        } else if(value != null) {
+            if(handler != null && !handler.hasArgument(otherArgs.size())) {
+                throw new CommandFormatException("Unexpected argument '" + value + "'.");
+            }
+            otherArgs.add(value);
         }
     }
 }

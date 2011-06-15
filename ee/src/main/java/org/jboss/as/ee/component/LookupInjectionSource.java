@@ -22,8 +22,8 @@
 
 package org.jboss.as.ee.component;
 
-import org.jboss.as.naming.deployment.ContextNames;
 import org.jboss.as.naming.ManagedReferenceFactory;
+import org.jboss.as.naming.deployment.ContextNames;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.msc.inject.Injector;
 import org.jboss.msc.service.ServiceBuilder;
@@ -37,26 +37,35 @@ import org.jboss.msc.service.ServiceName;
 public final class LookupInjectionSource extends InjectionSource {
     private final String lookupName;
 
+    private final boolean optionalInjection;
+
     /**
      * Construct a new instance.
      *
      * @param lookupName the name of the JNDI context to look up
      */
     public LookupInjectionSource(final String lookupName) {
+        this(lookupName, false);
+    }
+
+    public LookupInjectionSource(final String lookupName, final boolean optionalInjection) {
         if (lookupName == null) {
             throw new IllegalArgumentException("lookupName is null");
         }
         this.lookupName = lookupName;
+        this.optionalInjection = optionalInjection;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public void getResourceValue(final ResolutionContext resolutionContext, final ServiceBuilder<?> serviceBuilder, final DeploymentPhaseContext phaseContext, final Injector<ManagedReferenceFactory> injector) {
         final String applicationName = resolutionContext.getApplicationName();
         final String moduleName = resolutionContext.getModuleName();
         final String componentName = resolutionContext.getComponentName();
         final boolean compUsesModule = resolutionContext.isCompUsesModule();
         final String lookupName;
-        if(! this.lookupName.startsWith("java:")) {
+        if (!this.lookupName.startsWith("java:")) {
             if (componentName != null && !compUsesModule) {
                 lookupName = "java:comp/env/" + this.lookupName;
             } else if (compUsesModule) {
@@ -70,18 +79,21 @@ public final class LookupInjectionSource extends InjectionSource {
             lookupName = this.lookupName;
         }
         final ServiceName serviceName = ContextNames.serviceNameOfContext(applicationName, moduleName, componentName, lookupName);
-        serviceBuilder.addDependency(serviceName, ManagedReferenceFactory.class, injector);
+        if (optionalInjection) {
+            serviceBuilder.addDependency(ServiceBuilder.DependencyType.OPTIONAL, serviceName, ManagedReferenceFactory.class, injector);
+        } else {
+            serviceBuilder.addDependency(serviceName, ManagedReferenceFactory.class, injector);
+        }
+
     }
 
-    public boolean equals(final Object obj) {
-        return obj instanceof LookupInjectionSource && equals((LookupInjectionSource) obj);
+
+    public boolean equalTo(InjectionSource configuration, DeploymentPhaseContext context) {
+        if (configuration instanceof LookupInjectionSource) {
+            LookupInjectionSource lookup = (LookupInjectionSource) configuration;
+            return lookupName.equals(lookup.lookupName);
+        }
+        return false;
     }
 
-    private boolean equals(LookupInjectionSource configuration) {
-        return configuration != null && lookupName.equals(configuration.lookupName);
-    }
-
-    public int hashCode() {
-        return LookupInjectionSource.class.hashCode() * 127 + lookupName.hashCode();
-    }
 }

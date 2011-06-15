@@ -72,7 +72,7 @@ public final class ModuleDependencyProcessor implements DeploymentUnitProcessor 
 
             final String[] dependencyDefs = dependencyString.split(",");
             for (final String dependencyDef : dependencyDefs) {
-                final String[] dependencyParts = dependencyDef.split(" ");
+                final String[] dependencyParts = dependencyDef.trim().split(" ");
                 if (dependencyParts.length == 0) {
                     throw new RuntimeException("Invalid dependency: " + dependencyString);
                 }
@@ -88,14 +88,14 @@ public final class ModuleDependencyProcessor implements DeploymentUnitProcessor 
                     dependencyLoader = Module.getBootModuleLoader();
                 }
                 final ModuleDependency dependency = new ModuleDependency(dependencyLoader, dependencyId, optional, export, services);
-                moduleSpecification.addDependency(dependency);
+                moduleSpecification.addUserDependency(dependency);
                 deploymentUnit.addToAttachmentList(Attachments.MANIFEST_DEPENDENCIES, dependency);
             }
         }
         if (deploymentUnit.getParent() != null) {
             // propagate parent manifest dependencies
             final List<ModuleDependency> parentDependencies = deploymentUnit.getParent().getAttachmentList(Attachments.MANIFEST_DEPENDENCIES);
-            moduleSpecification.addDependencies(parentDependencies);
+            moduleSpecification.addSystemDependencies(parentDependencies);
         }
     }
 

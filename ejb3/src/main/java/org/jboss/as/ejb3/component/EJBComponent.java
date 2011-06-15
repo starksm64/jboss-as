@@ -31,8 +31,12 @@ import org.jboss.logging.Logger;
 import org.jboss.msc.service.ServiceController;
 
 import javax.ejb.ApplicationException;
+import javax.ejb.EJBException;
 import javax.ejb.EJBHome;
 import javax.ejb.EJBLocalHome;
+import javax.ejb.ScheduleExpression;
+import javax.ejb.Timer;
+import javax.ejb.TimerConfig;
 import javax.ejb.TimerService;
 import javax.ejb.TransactionAttributeType;
 import javax.ejb.TransactionManagementType;
@@ -44,9 +48,12 @@ import javax.transaction.SystemException;
 import javax.transaction.TransactionManager;
 import javax.transaction.TransactionSynchronizationRegistry;
 import javax.transaction.UserTransaction;
+import java.io.Serializable;
 import java.lang.reflect.Method;
 import java.security.Principal;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
@@ -113,6 +120,20 @@ public abstract class EJBComponent extends BasicComponent implements org.jboss.e
         return null;
     }
 
+    protected TransactionAttributeType getCurrentTransactionAttribute() {
+        final InvocationContext currentInvocationContext = CurrentInvocationContext.get();
+        if (currentInvocationContext == null) {
+            return null;
+        }
+        final Method invokedMethod = currentInvocationContext.getMethod();
+        // if method is null, then it's a lifecycle invocation
+        if (invokedMethod == null) {
+            return null;
+        }
+        // get the tx attribute of the invoked method
+        return this.getTransactionAttributeType(invokedMethod);
+    }
+
     @Override
     public EJBHome getEJBHome() throws IllegalStateException {
         throw new RuntimeException("NYI: org.jboss.as.ejb3.component.EJBComponent.getEJBHome");
@@ -126,26 +147,9 @@ public abstract class EJBComponent extends BasicComponent implements org.jboss.e
     @Override
     public boolean getRollbackOnly() throws IllegalStateException {
         if (isBeanManagedTransaction()) {
-            throw new IllegalStateException("EJB 3.1 FR 4.3.3 & 5.4.5 Only beans with container-managed transaction demarcation " +
-                    "can use this method.");
+            throw new IllegalStateException("EJB 3.1 FR 13.6.1 Only beans with container-managed transaction demarcation " +
+                    "can use getRollbackOnly.");
         }
-        final InvocationContext currentInvocationContext = CurrentInvocationContext.get();
-        if (currentInvocationContext == null) {
-            throw new IllegalStateException("getRollbackOnly() not allowed during construction and injection");
-        }
-        final Method invokedMethod = currentInvocationContext.getMethod();
-        // if method is null, then it's a lifecycle invocation
-        if (invokedMethod == null) {
-            throw new IllegalStateException("getRollbackOnly() not allowed during lifecycle callbacks (EJB3 4.4.1 & 4.5.2)");
-        }
-        // get the tx attribute of the invoked method
-        final TransactionAttributeType txAttr = this.getTransactionAttributeType(invokedMethod);
-        // make sure EJBContext.getRollbackOnly() method invocation is allowed for this transaction attribute type
-        if (!this.isGetRollbackOnlyAllowed(txAttr)) {
-            throw new IllegalStateException("getRollbackOnly() not allowed for method: " + invokedMethod + " with transaction " +
-                    "attribute: " + txAttr);
-        }
-
         try {
             TransactionManager tm = this.getTransactionManager();
 
@@ -178,7 +182,8 @@ public abstract class EJBComponent extends BasicComponent implements org.jboss.e
 
     @Override
     public TimerService getTimerService() throws IllegalStateException {
-        throw new RuntimeException("NYI: org.jboss.as.ejb3.component.EJBComponent.getTimerService");
+        // TODO: Temporary, till we have a working timerservice integrated
+        return new NonFunctionalTimerService();
     }
 
     @Deprecated
@@ -277,32 +282,16 @@ public abstract class EJBComponent extends BasicComponent implements org.jboss.e
         try {
             return jndiContext.lookup(namespaceStrippedJndiName);
         } catch (NamingException ne) {
-            throw new RuntimeException("Could not lookup jndi name: " + namespaceStrippedJndiName + " in context: " + jndiContext, ne);
+            throw new IllegalArgumentException("Could not lookup jndi name: " + namespaceStrippedJndiName + " in context: " + jndiContext, ne);
         }
     }
 
     @Override
     public void setRollbackOnly() throws IllegalStateException {
         if (isBeanManagedTransaction()) {
-            throw new IllegalStateException("EJB 3.1 FR 4.3.3 & 5.4.5 Only beans with container-managed transaction demarcation " +
-                    "can use this method.");
+            throw new IllegalStateException("EJB 3.1 FR 13.6.1 Only beans with container-managed transaction demarcation " +
+                    "can use setRollbackOnly.");
         }
-        final InvocationContext currentInvocationContext = CurrentInvocationContext.get();
-        if (currentInvocationContext == null) {
-            throw new IllegalStateException("setRollbackOnly() not allowed during construction and injection");
-        }
-        final Method invokedMethod = currentInvocationContext.getMethod();
-        // if method is null, then it's a lifecycle invocation
-        if (invokedMethod == null) {
-            throw new IllegalStateException("setRollbackOnly() not allowed during lifecycle callbacks (EJB3 4.4.1 & 4.5.2)");
-        }
-        // get the tx attribute of the invoked method
-        final TransactionAttributeType txAttr = this.getTransactionAttributeType(invokedMethod);
-        // make sure EJBContext.setRollbackOnly() method invocation is allowed for this transaction attribute type
-        if (!this.isSetRollbackOnlyAllowed(txAttr)) {
-            throw new IllegalStateException("setRollbackOnly() not allowed for method: " + invokedMethod + " with transaction attribute: " + txAttr);
-        }
-
         try {
             // get the transaction manager
             TransactionManager tm = getTransactionManager();
@@ -318,23 +307,66 @@ public abstract class EJBComponent extends BasicComponent implements org.jboss.e
     }
 
     /**
-     * Returns true if the EJB component allows {@link javax.ejb.EJBContext#setRollbackOnly()} invocation from a EJB business
-     * method with the passed <code>txAttrType</code>. Else returns false.
-     *
-     * @param txAttrType The {@link TransactionAttributeType} of the EJB method from which the {@link javax.ejb.EJBContext#setRollbackOnly()}
-     *                   was invoked.
-     * @return
+     * TODO: Delete this non-functional timerservice once we have a working timerservice integrated with EJBs.
      */
-    protected abstract boolean isSetRollbackOnlyAllowed(final TransactionAttributeType txAttrType);
+    private class NonFunctionalTimerService implements TimerService {
 
-    /**
-     * Returns true if the EJB component allows {@link javax.ejb.EJBContext#getRollbackOnly()} invocation from a EJB business
-     * method with the passed <code>txAttrType</code>. Else returns false.
-     *
-     * @param txAttrType The {@link TransactionAttributeType} of the EJB method from which the {@link javax.ejb.EJBContext#getRollbackOnly()}
-     *                   was invoked.
-     * @return
-     */
-    protected abstract boolean isGetRollbackOnlyAllowed(final TransactionAttributeType txAttrType);
+        private final UnsupportedOperationException UNSUPPORTED_OPERATION_EXCEPTION = new UnsupportedOperationException("This is a " +
+                "temporary non-functional timerservice. No operations are allowed on it.");
 
+        @Override
+        public Timer createCalendarTimer(ScheduleExpression schedule) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createCalendarTimer(ScheduleExpression schedule, TimerConfig timerConfig) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createIntervalTimer(Date initialExpiration, long intervalDuration, TimerConfig timerConfig) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createIntervalTimer(long initialDuration, long intervalDuration, TimerConfig timerConfig) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createSingleActionTimer(Date expiration, TimerConfig timerConfig) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createSingleActionTimer(long duration, TimerConfig timerConfig) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createTimer(long duration, Serializable info) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createTimer(long initialDuration, long intervalDuration, Serializable info) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createTimer(Date expiration, Serializable info) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Timer createTimer(Date initialExpiration, long intervalDuration, Serializable info) throws IllegalArgumentException, IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+
+        @Override
+        public Collection<Timer> getTimers() throws IllegalStateException, EJBException {
+            throw UNSUPPORTED_OPERATION_EXCEPTION;
+        }
+    }
 }

@@ -46,7 +46,11 @@ import static org.jboss.as.server.deployment.Attachments.REFLECTION_INDEX;
 public final class MethodInjectionTarget extends InjectionTarget {
 
     public MethodInjectionTarget(final String className, final String name, final String paramType) {
-        super(className, name, paramType);
+        this(className, name, paramType, false);
+    }
+
+    public MethodInjectionTarget(final String className, final String name, final String paramType, final boolean optional) {
+        super(className, name, paramType, optional);
     }
 
     public InterceptorFactory createInjectionInterceptorFactory(final Object targetContextKey, final Object valueContextKey, final Value<ManagedReferenceFactory> factoryValue, final DeploymentUnit deploymentUnit) throws DeploymentUnitProcessingException {
@@ -72,12 +76,16 @@ public final class MethodInjectionTarget extends InjectionTarget {
         }
         Iterator<Method> iterator = methods.iterator();
         if (!iterator.hasNext()) {
-            throw new DeploymentUnitProcessingException("No matching method found for method '" + name + "' on '" + className + "'");
+            throw new DeploymentUnitProcessingException("No matching method found for method " + name +
+                    paramType != null ? "(" + paramType + ")" : "" +
+                    " on " + className);
         }
         Method method = iterator.next();
         if (iterator.hasNext()) {
-            throw new DeploymentUnitProcessingException("More than one matching method found for method '" + name + "' on '" + className + "'");
+            throw new DeploymentUnitProcessingException("More than one matching method found for method '" + name +
+                    paramType != null ? "(" + paramType + ")" : "" +
+                    " on " + className);
         }
-        return new ManagedReferenceMethodInjectionInterceptorFactory(targetContextKey, valueContextKey, factoryValue, method);
+        return new ManagedReferenceMethodInjectionInterceptorFactory(targetContextKey, valueContextKey, factoryValue, method, this.isOptionalInjection());
     }
 }

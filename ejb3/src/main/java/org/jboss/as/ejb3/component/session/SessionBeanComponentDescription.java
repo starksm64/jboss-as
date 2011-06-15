@@ -23,27 +23,21 @@
 package org.jboss.as.ejb3.component.session;
 
 
-import org.jboss.as.ee.component.Component;
 import org.jboss.as.ee.component.ComponentConfiguration;
 import org.jboss.as.ee.component.ComponentConfigurator;
 import org.jboss.as.ee.component.ComponentDescription;
-import org.jboss.as.ee.component.ComponentInterceptorFactory;
 import org.jboss.as.ee.component.ViewConfiguration;
 import org.jboss.as.ee.component.ViewConfigurator;
 import org.jboss.as.ee.component.ViewDescription;
-import org.jboss.as.ejb3.PrimitiveClassLoaderUtil;
-import org.jboss.as.ejb3.component.EJBBusinessMethod;
+import org.jboss.as.ee.component.interceptors.InterceptorOrder;
 import org.jboss.as.ejb3.component.EJBComponentDescription;
-import org.jboss.as.ejb3.component.EJBMethodDescription;
+import org.jboss.as.ejb3.component.EJBViewDescription;
 import org.jboss.as.ejb3.component.MethodIntf;
 import org.jboss.as.ejb3.deployment.EjbJarDescription;
-import org.jboss.as.ejb3.tx.CMTTxInterceptor;
+import org.jboss.as.ejb3.tx.CMTTxInterceptorFactory;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
-import org.jboss.ejb3.tx2.spi.TransactionalComponent;
 import org.jboss.invocation.ImmediateInterceptorFactory;
-import org.jboss.invocation.Interceptor;
-import org.jboss.invocation.InterceptorFactoryContext;
 import org.jboss.invocation.proxy.MethodIdentifier;
 import org.jboss.logging.Logger;
 import org.jboss.msc.service.ServiceBuilder;
@@ -52,7 +46,10 @@ import org.jboss.msc.service.ServiceName;
 import javax.ejb.AccessTimeout;
 import javax.ejb.ConcurrencyManagementType;
 import javax.ejb.LockType;
+import javax.ejb.SessionBean;
 import javax.ejb.TransactionManagementType;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -63,6 +60,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author Jaikiran Pai
+ * @author <a href="mailto:ropalka@redhat.com">Richard Opalka</a>
  */
 public abstract class SessionBeanComponentDescription extends EJBComponentDescription {
 
@@ -73,32 +71,30 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
      */
     private boolean noInterfaceViewPresent;
 
-    private Map<String, MethodIntf> viewTypes = new HashMap<String, MethodIntf>();
-
     /**
      * The {@link javax.ejb.ConcurrencyManagementType} for this bean
      */
     private ConcurrencyManagementType concurrencyManagementType;
 
     /**
-     * The bean level {@link LockType} for this bean.
+     * Map of class name to default {@link LockType} for this bean.
      */
-    private LockType beanLevelLockType;
+    private Map<String, LockType> beanLevelLockType = new HashMap<String, LockType>();
 
     /**
-     * The bean level {@link AccessTimeout} for this bean.
+     * Map of class name to default {@link AccessTimeout} for this component.
      */
-    private AccessTimeout beanLevelAccessTimeout;
+    private Map<String, AccessTimeout> beanLevelAccessTimeout = new HashMap<String, AccessTimeout>();
 
     /**
      * The {@link LockType} applicable for a specific bean methods.
      */
-    private Map<EJBMethodDescription, LockType> methodLockTypes = new ConcurrentHashMap<EJBMethodDescription, LockType>();
+    private Map<MethodIdentifier, LockType> methodLockTypes = new ConcurrentHashMap<MethodIdentifier, LockType>();
 
     /**
      * The {@link AccessTimeout} applicable for a specific bean methods.
      */
-    private Map<EJBMethodDescription, AccessTimeout> methodAccessTimeouts = new ConcurrentHashMap<EJBMethodDescription, AccessTimeout>();
+    private Map<MethodIdentifier, AccessTimeout> methodAccessTimeouts = new ConcurrentHashMap<MethodIdentifier, AccessTimeout>();
 
     /**
      * Methods on the component marked as @Asynchronous
@@ -132,10 +128,7 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
     public SessionBeanComponentDescription(final String componentName, final String componentClassName,
                                            final EjbJarDescription ejbJarDescription, final ServiceName deploymentUnitServiceName) {
         super(componentName, componentClassName, ejbJarDescription, deploymentUnitServiceName);
-
-        // Add a dependency on the asyc-executor
         addDependency(SessionBeanComponent.ASYNC_EXECUTOR_SERVICE_NAME, ServiceBuilder.DependencyType.REQUIRED);
-
     }
 
     /**
@@ -147,26 +140,10 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
      */
     public abstract boolean allowsConcurrentAccess();
 
-    public void addLocalBusinessInterfaceViews(Collection<String> classNames) {
-        for (String viewClassName : classNames) {
-            // EJB 3.1 spec, section 4.9.7:
-            // The same business interface cannot be both a local and a remote business interface of the bean.
-
-            // if the view class is already marked as Remote, then throw an error
-            if (this.viewTypes.get(viewClassName) == MethodIntf.REMOTE) {
-                throw new IllegalStateException("[EJB 3.1 spec, section 4.9.7] - Can't add view class: " + viewClassName
-                        + " as local view since it's already marked as remote view for bean: " + this.getEJBName());
-            }
-            // add it to our map
-            viewTypes.put(viewClassName, MethodIntf.LOCAL);
-            // setup the ViewDescription
-            ViewDescription viewDescription = new ViewDescription(this, viewClassName);
-            this.getViews().add(viewDescription);
-
-            // setup server side view interceptors
-            this.setupViewInterceptors(viewDescription);
-            // setup client side view interceptors
-            this.setupClientViewInterceptors(viewDescription);
+    public void addLocalBusinessInterfaceViews(final Collection<String> classNames) {
+        for (final String viewClassName : classNames) {
+            assertNoRemoteView(viewClassName);
+            registerView(viewClassName, MethodIntf.LOCAL);
         }
     }
 
@@ -175,46 +152,65 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
     }
 
     public void addNoInterfaceView() {
-        this.noInterfaceViewPresent = true;
-        // add it to our map
-        viewTypes.put(getEJBClassName(), MethodIntf.LOCAL);
-        // setup the ViewDescription
-        ViewDescription viewDescription = new ViewDescription(this, this.getEJBClassName());
-        this.getViews().add(viewDescription);
-        // setup server side view interceptors
-        this.setupViewInterceptors(viewDescription);
-        // setup client side view interceptors
-        this.setupClientViewInterceptors(viewDescription);
+        noInterfaceViewPresent = true;
+        final ViewDescription viewDescription = registerView(getEJBClassName(), MethodIntf.LOCAL);
+        //set up interceptor for non-business methods
+        viewDescription.getConfigurators().add(new ViewConfigurator() {
+            @Override
+            public void configure(final DeploymentPhaseContext context, final ComponentConfiguration componentConfiguration, final ViewDescription description, final ViewConfiguration configuration) throws DeploymentUnitProcessingException {
+                for (final Method method : configuration.getProxyFactory().getCachedMethods()) {
+                    if (!Modifier.isPublic(method.getModifiers())) {
+                        configuration.addViewInterceptor(method, new ImmediateInterceptorFactory(new NotBusinessMethodInterceptor(method)), InterceptorOrder.View.NOT_BUSINESS_METHOD);
+                    }
+                }
+            }
+        });
+    }
 
+    public EJBViewDescription addWebserviceEndpointView() { // TODO: shouldn't we reuse addNoInterfaceView() method and pass one parameter to it explicitly?
+        noInterfaceViewPresent = true; // TODO ? should we modify this mark for WS endpoint views?
+        return registerView(getEJBClassName(), MethodIntf.SERVICE_ENDPOINT);
     }
 
     public void addRemoteBusinessInterfaceViews(final Collection<String> classNames) {
-        for (String viewClassName : classNames) {
-            // EJB 3.1 spec, section 4.9.7:
-            // The same business interface cannot be both a local and a remote business interface of the bean.
-
-            // if the view class is already marked as Local, then throw an error
-            if (this.viewTypes.get(viewClassName) == MethodIntf.LOCAL) {
-                throw new IllegalStateException("[EJB 3.1 spec, section 4.9.7] - Can't add view class: " + viewClassName
-                        + " as remote view since it's already marked as local view for bean: " + this.getEJBName());
-            }
-            // add it to our map
-            viewTypes.put(viewClassName, MethodIntf.REMOTE);
-            // setup the ViewDescription
-            ViewDescription viewDescription = new ViewDescription(this, viewClassName);
-            this.getViews().add(viewDescription);
-            // setup server side view interceptors
-            this.setupViewInterceptors(viewDescription);
-            // setup client side view interceptors
-            this.setupClientViewInterceptors(viewDescription);
+        for (final String viewClassName : classNames) {
+            assertNoLocalView(viewClassName);
+            registerView(viewClassName, MethodIntf.REMOTE);
         }
     }
 
-    @Override
-    public MethodIntf getMethodIntf(String viewClassName) {
-        MethodIntf methodIntf = viewTypes.get(viewClassName);
-        assert methodIntf != null : "no view type known for " + viewClassName;
-        return methodIntf;
+    private void assertNoRemoteView(final String viewClassName) {
+        EJBViewDescription ejbView = null;
+        for (final ViewDescription view: getViews()) {
+            ejbView = (EJBViewDescription) view;
+            if (viewClassName.equals(ejbView.getViewClassName()) && ejbView.getMethodIntf() == MethodIntf.REMOTE) {
+                throw new IllegalStateException("[EJB 3.1 spec, section 4.9.7] - Can't add view class: " + viewClassName
+                        + " as local view since it's already marked as remote view for bean: " + getEJBName());
+            }
+        }
+    }
+
+    private void assertNoLocalView(final String viewClassName) {
+        EJBViewDescription ejbView = null;
+        for (final ViewDescription view: getViews()) {
+            ejbView = (EJBViewDescription) view;
+            if (viewClassName.equals(ejbView.getViewClassName()) && ejbView.getMethodIntf() == MethodIntf.LOCAL) {
+                throw new IllegalStateException("[EJB 3.1 spec, section 4.9.7] - Can't add view class: " + viewClassName
+                        + " as remote view since it's already marked as local view for bean: " + getEJBName());
+            }
+        }
+    }
+
+    private EJBViewDescription registerView(final String viewClassName, final MethodIntf viewType) {
+        // setup the ViewDescription
+        final EJBViewDescription viewDescription = new EJBViewDescription(this, viewClassName, viewType);
+        getViews().add(viewDescription);
+        // setup server side view interceptors
+        setupViewInterceptors(viewDescription);
+        // setup client side view interceptors
+        setupClientViewInterceptors(viewDescription);
+        // return created view
+        return viewDescription;
     }
 
     public boolean hasNoInterfaceView() {
@@ -224,14 +220,11 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
     /**
      * Sets the {@link javax.ejb.LockType} applicable for the bean.
      *
+     * @param className The class that has the annotation
      * @param locktype The lock type applicable for the bean
-     * @throws IllegalArgumentException If the bean has already been marked for a different {@link javax.ejb.LockType} than the one passed
      */
-    public void setBeanLevelLockType(LockType locktype) {
-        if (this.beanLevelLockType != null && this.beanLevelLockType != locktype) {
-            throw new IllegalArgumentException(this.getEJBName() + " bean has already been marked for " + this.beanLevelLockType + " lock type. Cannot change it to " + locktype);
-        }
-        this.beanLevelLockType = locktype;
+    public void setBeanLevelLockType(String className, LockType locktype) {
+        this.beanLevelLockType.put(className, locktype);
     }
 
     /**
@@ -239,18 +232,22 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
      *
      * @return
      */
-    public LockType getBeanLevelLockType() {
+    public Map<String, LockType> getBeanLevelLockType() {
         return this.beanLevelLockType;
     }
 
     /**
-     * Sets the {@link LockType} for the specific bean method represented by the <code>methodName</code> and <code>methodParamTypes</code>
+     * Sets the {@link LockType} for the specific bean method
      *
      * @param lockType The applicable lock type for the method
      * @param method   The method
      */
-    public void setLockType(LockType lockType, EJBMethodDescription method) {
+    public void setLockType(LockType lockType, MethodIdentifier method) {
         this.methodLockTypes.put(method, lockType);
+    }
+
+    public Map<MethodIdentifier, LockType> getMethodApplicableLockTypes() {
+        return this.methodLockTypes;
     }
 
     /**
@@ -258,31 +255,31 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
      *
      * @return
      */
-    public AccessTimeout getBeanLevelAccessTimeout() {
+    public Map<String, AccessTimeout> getBeanLevelAccessTimeout() {
         return this.beanLevelAccessTimeout;
     }
 
     /**
      * Sets the {@link javax.ejb.AccessTimeout} applicable for the bean.
      *
-     * @param accessTimeout The access timeout applicable for the bean
-     * @throws IllegalArgumentException If the bean has already been marked for a different {@link javax.ejb.AccessTimeout} than the one passed
+     * @param accessTimeout The access timeout applicable for the class
      */
-    public void setBeanLevelAccessTimeout(AccessTimeout accessTimeout) {
-        if (this.beanLevelAccessTimeout != null && this.beanLevelAccessTimeout != accessTimeout) {
-            throw new IllegalArgumentException(this.getEJBName() + " bean has already been marked for " + this.beanLevelAccessTimeout + " access timeout. Cannot change it to " + accessTimeout);
-        }
-        this.beanLevelAccessTimeout = accessTimeout;
+    public void setBeanLevelAccessTimeout(String className, AccessTimeout accessTimeout) {
+        this.beanLevelAccessTimeout.put(className, accessTimeout);
     }
 
     /**
-     * Sets the {@link AccessTimeout} for the specific bean method represented by the <code>methodName</code> and <code>methodParamTypes</code>
+     * Sets the {@link AccessTimeout} for the specific bean method
      *
      * @param accessTimeout The applicable access timeout for the method
      * @param method        The method
      */
-    public void setAccessTimeout(AccessTimeout accessTimeout, EJBMethodDescription method) {
+    public void setAccessTimeout(AccessTimeout accessTimeout, MethodIdentifier method) {
         this.methodAccessTimeouts.put(method, accessTimeout);
+    }
+
+    public Map<MethodIdentifier, AccessTimeout> getMethodApplicableAccessTimeouts() {
+        return this.methodAccessTimeouts;
     }
 
     /**
@@ -366,81 +363,6 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
      */
     public abstract SessionBeanType getSessionBeanType();
 
-//    @Override
-//    protected void processComponentMethod(final ComponentConfiguration configuration, final Method componentMethod) throws DeploymentUnitProcessingException {
-//        super.processComponentMethod(configuration, componentMethod);
-//        // Process the async methods
-//        if (asynchronousMethods.contains(MethodIdentifier.getIdentifierForMethod(componentMethod)) || asynchronousViews.contains(componentMethod.getDeclaringClass().getName())) {
-//            if (!Void.TYPE.isAssignableFrom(componentMethod.getReturnType()) && !Future.class.isAssignableFrom(componentMethod.getReturnType())) {
-//                throw new DeploymentUnitProcessingException("Invalid asynchronous method [" + componentMethod + "].  Asynchronous methods must return either void or Future<V>.");
-//            }
-//            SessionBeanComponentConfiguration sessionBeanComponentConfiguration = (SessionBeanComponentConfiguration) configuration;
-//            sessionBeanComponentConfiguration.addAsynchronousMethod(componentMethod);
-//        }
-//    }
-
-//    @Override
-//    protected void prepareComponentConfiguration(ComponentConfiguration configuration, DeploymentPhaseContext phaseContext) throws DeploymentUnitProcessingException {
-//        // let super do it's job first
-//        super.prepareComponentConfiguration(configuration, phaseContext);
-//
-//        SessionBeanComponentConfiguration sessionBeanComponentConfiguration = (SessionBeanComponentConfiguration) configuration;
-//        // update the SessionBeanConfiguration with the method level LockType info
-//        this.prepareLockConfiguration(sessionBeanComponentConfiguration, phaseContext);
-//        // update the SessionBeanConfiguration with the method level @AccessTimeout info
-//        this.prepareAccessTimeoutConfiguration(sessionBeanComponentConfiguration, phaseContext);
-//    }
-
-    private void prepareAccessTimeoutConfiguration(SessionBeanComponentConfiguration sessionBeanComponentConfiguration, DeploymentPhaseContext phaseContext) throws DeploymentUnitProcessingException {
-        ClassLoader beanClassLoader = sessionBeanComponentConfiguration.getComponentClass().getClassLoader();
-        Map<EJBBusinessMethod, AccessTimeout> methodApplicableAccessTimeouts = new HashMap();
-        for (Map.Entry<EJBMethodDescription, AccessTimeout> entry : this.methodAccessTimeouts.entrySet()) {
-            EJBMethodDescription method = entry.getKey();
-            try {
-                EJBBusinessMethod ejbMethod = this.getEJBBusinessMethod(method, beanClassLoader);
-                methodApplicableAccessTimeouts.put(ejbMethod, entry.getValue());
-            } catch (ClassNotFoundException cnfe) {
-                throw new DeploymentUnitProcessingException("Could not process @AccessTimeout configurations due to exception: ", cnfe);
-            }
-
-        }
-        // add it to the SessionBeanConfiguration
-        sessionBeanComponentConfiguration.setMethodApplicableAccessTimeout(methodApplicableAccessTimeouts);
-
-    }
-
-    private void prepareLockConfiguration(SessionBeanComponentConfiguration sessionBeanComponentConfiguration, DeploymentPhaseContext phaseContext) throws DeploymentUnitProcessingException {
-        ClassLoader beanClassLoader = sessionBeanComponentConfiguration.getComponentClass().getClassLoader();
-        Map<EJBBusinessMethod, LockType> methodApplicableLockTypes = new HashMap();
-        for (Map.Entry<EJBMethodDescription, LockType> entry : this.methodLockTypes.entrySet()) {
-            EJBMethodDescription method = entry.getKey();
-            try {
-                EJBBusinessMethod ejbMethod = this.getEJBBusinessMethod(method, beanClassLoader);
-                methodApplicableLockTypes.put(ejbMethod, entry.getValue());
-
-            } catch (ClassNotFoundException cnfe) {
-                throw new DeploymentUnitProcessingException("Could not process LockType configurations due to exception: ", cnfe);
-            }
-        }
-        // add the locktype to the session bean configuration
-        sessionBeanComponentConfiguration.setMethodApplicableLockType(methodApplicableLockTypes);
-
-    }
-
-    private EJBBusinessMethod getEJBBusinessMethod(EJBMethodDescription method, ClassLoader classLoader) throws ClassNotFoundException {
-        String methodName = method.getMethodName();
-        String[] types = method.getMethodParams();
-        if (types == null || types.length == 0) {
-            return new EJBBusinessMethod(methodName, new Class<?>[0]);
-        }
-        Class<?>[] paramTypes = new Class<?>[types.length];
-        int i = 0;
-        for (String type : types) {
-            paramTypes[i++] = PrimitiveClassLoaderUtil.loadClass(type.toString(), classLoader);
-        }
-        return new EJBBusinessMethod(methodName, paramTypes);
-    }
-
     @Override
     protected void setupViewInterceptors(ViewDescription view) {
         // let super do it's job first
@@ -449,7 +371,7 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
         // current invocation
 
         // tx management interceptor(s)
-        this.addTxManagementInterceptorForView(view);
+        addTxManagementInterceptorForView(view);
 
     }
 
@@ -458,7 +380,7 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
      *
      * @param view The EJB bean view
      */
-    protected void addTxManagementInterceptorForView(ViewDescription view) {
+    protected static void addTxManagementInterceptorForView(ViewDescription view) {
         // add a Tx configurator
         view.getConfigurators().add(new ViewConfigurator() {
             @Override
@@ -466,16 +388,7 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
                 EJBComponentDescription ejbComponentDescription = (EJBComponentDescription) componentConfiguration.getComponentDescription();
                 // Add CMT interceptor factory
                 if (TransactionManagementType.CONTAINER.equals(ejbComponentDescription.getTransactionManagementType())) {
-                    configuration.addViewInterceptorToFront(new ComponentInterceptorFactory() {
-                        @Override
-                        protected Interceptor create(Component component, InterceptorFactoryContext context) {
-                            if (component instanceof TransactionalComponent == false) {
-                                throw new IllegalArgumentException("Component " + component + " with component class: " + component.getComponentClass() +
-                                        " isn't a transactional component. Tx interceptors cannot be applied");
-                            }
-                            return new CMTTxInterceptor((TransactionalComponent) component);
-                        }
-                    });
+                    configuration.addViewInterceptor(CMTTxInterceptorFactory.INSTANCE, InterceptorOrder.View.CMT_TRANSACTION_INTERCEPTOR);
                 }
             }
         });
@@ -487,7 +400,12 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
         this.getConfigurators().add(new ComponentConfigurator() {
             @Override
             public void configure(DeploymentPhaseContext context, ComponentDescription description, ComponentConfiguration configuration) throws DeploymentUnitProcessingException {
-                configuration.getPostConstructInterceptors().addFirst(new ImmediateInterceptorFactory(new SessionInvocationContextInterceptor()));
+                if (SessionBean.class.isAssignableFrom(configuration.getComponentClass())) {
+
+                    configuration.addPostConstructInterceptor(SessionBeanSessionContextInjectionInterceptor.FACTORY, InterceptorOrder.ComponentPostConstruct.RESOURCE_INJECTION_INTERCEPTORS);
+                }
+                configuration.addPostConstructInterceptor(SessionInvocationContextInterceptor.LIFECYCLE_FACTORY, InterceptorOrder.ComponentPostConstruct.EJB_SESSION_CONTEXT_INTERCEPTOR);
+                configuration.addPreDestroyInterceptor(SessionInvocationContextInterceptor.LIFECYCLE_FACTORY, InterceptorOrder.ComponentPreDestroy.EJB_SESSION_CONTEXT_INTERCEPTOR);
             }
         });
     }
@@ -497,9 +415,25 @@ public abstract class SessionBeanComponentDescription extends EJBComponentDescri
         view.getConfigurators().add(new ViewConfigurator() {
             @Override
             public void configure(DeploymentPhaseContext context, ComponentConfiguration componentConfiguration, ViewDescription description, ViewConfiguration configuration) throws DeploymentUnitProcessingException {
-                configuration.addViewInterceptorToFront(new ImmediateInterceptorFactory(new SessionInvocationContextInterceptor()));
+                configuration.addViewInterceptor(SessionInvocationContextInterceptor.FACTORY, InterceptorOrder.View.INVOCATION_CONTEXT_INTERCEPTOR);
             }
         });
 
     }
+
+    @Override
+    public boolean isSingleton() {
+        return getSessionBeanType() == SessionBeanType.SINGLETON;
+    }
+
+    @Override
+    public boolean isStateful() {
+        return getSessionBeanType() == SessionBeanType.STATEFUL;
+    }
+
+    @Override
+    public boolean isStateless() {
+        return getSessionBeanType() == SessionBeanType.STATELESS;
+    }
+
 }

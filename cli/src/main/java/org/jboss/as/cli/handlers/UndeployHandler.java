@@ -30,6 +30,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.jboss.as.cli.CommandContext;
+import org.jboss.as.cli.CommandFormatException;
 import org.jboss.as.cli.CommandLineCompleter;
 import org.jboss.as.cli.ParsedArguments;
 import org.jboss.as.cli.Util;
@@ -55,13 +56,10 @@ public class UndeployHandler extends BatchModeCommandHandler {
     public UndeployHandler() {
         super("undeploy", true);
 
-        SimpleArgumentTabCompleter argsCompleter = (SimpleArgumentTabCompleter) this.getArgumentCompleter();
-
-        l = new ArgumentWithoutValue("-l");
+        l = new ArgumentWithoutValue(this, "-l");
         l.setExclusive(true);
-        argsCompleter.addArgument(l);
 
-        name = new ArgumentWithValue(false, new CommandLineCompleter() {
+        name = new ArgumentWithValue(this, new CommandLineCompleter() {
             @Override
             public int complete(CommandContext ctx, String buffer, int cursor, List<String> candidates) {
 
@@ -97,21 +95,19 @@ public class UndeployHandler extends BatchModeCommandHandler {
 
             }}, 0, "--name");
         name.addCantAppearAfter(l);
-        argsCompleter.addArgument(name);
 
-        allRelevantServerGroups = new ArgumentWithoutValue("--all-relevant-server-groups") {
+        allRelevantServerGroups = new ArgumentWithoutValue(this, "--all-relevant-server-groups") {
             @Override
-            public boolean canAppearNext(CommandContext ctx) {
+            public boolean canAppearNext(CommandContext ctx) throws CommandFormatException {
                 if(!ctx.isDomainMode()) {
                     return false;
                 }
                 return super.canAppearNext(ctx);
             }
         };
-        argsCompleter.addArgument(allRelevantServerGroups);
         allRelevantServerGroups.addRequiredPreceding(name);
 
-        serverGroups = new ArgumentWithValue(false, new CommandLineCompleter() {
+        serverGroups = new ArgumentWithValue(this, new CommandLineCompleter() {
             @Override
             public int complete(CommandContext ctx, String buffer, int cursor, List<String> candidates) {
 
@@ -161,7 +157,7 @@ public class UndeployHandler extends BatchModeCommandHandler {
                 return result;
             }}, "--server-groups") {
             @Override
-            public boolean canAppearNext(CommandContext ctx) {
+            public boolean canAppearNext(CommandContext ctx) throws CommandFormatException {
                 if(!ctx.isDomainMode()) {
                     return false;
                 }
@@ -169,18 +165,16 @@ public class UndeployHandler extends BatchModeCommandHandler {
             }
         };
         serverGroups.addRequiredPreceding(name);
-        argsCompleter.addArgument(serverGroups);
 
         serverGroups.addCantAppearAfter(allRelevantServerGroups);
         allRelevantServerGroups.addCantAppearAfter(serverGroups);
 
-        keepContent = new ArgumentWithoutValue("--keep-content");
-        argsCompleter.addArgument(keepContent);
+        keepContent = new ArgumentWithoutValue(this, "--keep-content");
         keepContent.addRequiredPreceding(name);
     }
 
     @Override
-    protected void doHandle(CommandContext ctx) {
+    protected void doHandle(CommandContext ctx) throws CommandFormatException {
 
         ModelControllerClient client = ctx.getModelControllerClient();
         ParsedArguments args = ctx.getParsedArguments();
@@ -236,23 +230,32 @@ public class UndeployHandler extends BatchModeCommandHandler {
         ModelControllerClient client = ctx.getModelControllerClient();
         DefaultOperationRequestBuilder builder;
 
-        boolean keepContent = this.keepContent.isPresent(args);
+        boolean keepContent;
+        try {
+            keepContent = this.keepContent.isPresent(args);
+        } catch (CommandFormatException e) {
+            throw new OperationFormatException(e.getLocalizedMessage());
+        }
         if(ctx.isDomainMode()) {
             final List<String> serverGroups;
-            if(allRelevantServerGroups.isPresent(args)) {
-                if(keepContent) {
-                    serverGroups = Util.getAllEnabledServerGroups(name, client);
+            try {
+                if(allRelevantServerGroups.isPresent(args)) {
+                    if(keepContent) {
+                        serverGroups = Util.getAllEnabledServerGroups(name, client);
+                    } else {
+                        serverGroups = Util.getAllReferencingServerGroups(name, client);
+                    }
                 } else {
-                    serverGroups = Util.getAllReferencingServerGroups(name, client);
+                    final String serverGroupsStr = this.serverGroups.getValue(args);
+                    if(serverGroupsStr == null) {
+                        //throw new OperationFormatException("Either --all-relevant-server-groups or --server-groups must be specified.");
+                        serverGroups = Collections.emptyList();
+                    } else {
+                        serverGroups = Arrays.asList(serverGroupsStr.split(","));
+                    }
                 }
-            } else {
-                final String serverGroupsStr = this.serverGroups.getValue(args);
-                if(serverGroupsStr == null) {
-                    //throw new OperationFormatException("Either --all-relevant-server-groups or --server-groups must be specified.");
-                    serverGroups = Collections.emptyList();
-                } else {
-                    serverGroups = Arrays.asList(serverGroupsStr.split(","));
-                }
+            } catch (CommandFormatException e) {
+                throw new OperationFormatException(e.getLocalizedMessage());
             }
 
             if(serverGroups.isEmpty()) {

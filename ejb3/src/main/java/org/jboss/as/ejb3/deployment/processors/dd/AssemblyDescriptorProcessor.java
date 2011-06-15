@@ -38,6 +38,7 @@ import org.jboss.metadata.ejb.spec.EjbJarMetaData;
  * appropriately with this info.
  *
  * @author Jaikiran Pai
+ * @author Stuart Douglas
  */
 public class AssemblyDescriptorProcessor implements DeploymentUnitProcessor {
     @Override

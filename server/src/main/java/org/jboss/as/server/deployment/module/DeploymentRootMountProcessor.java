@@ -27,6 +27,7 @@ import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.as.server.deployment.DeploymentUnit;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
 import org.jboss.as.server.deployment.DeploymentUnitProcessor;
+import org.jboss.as.server.deployment.MountExplodedMarker;
 import org.jboss.as.server.deployment.api.ServerDeploymentRepository;
 import org.jboss.vfs.VFS;
 import org.jboss.vfs.VFSUtils;
@@ -53,7 +54,6 @@ public class DeploymentRootMountProcessor implements DeploymentUnitProcessor {
         }
 
         final String deploymentName = deploymentUnit.getName();
-        final String deploymentRuntimeName = deploymentUnit.getAttachment(Attachments.RUNTIME_NAME);
         final VirtualFile deploymentContents = deploymentUnit.getAttachment(Attachments.DEPLOYMENT_CONTENTS);
 
         // internal deployments do not have any contents, so there is nothing to mount
@@ -69,13 +69,13 @@ public class DeploymentRootMountProcessor implements DeploymentUnitProcessor {
             mountHandle = null;
         } else {
             // The mount point we will use for the repository file
-            deploymentRoot = VFS.getChild("content/" + deploymentRuntimeName);
+            deploymentRoot = VFS.getChild("content/" + deploymentName);
 
             boolean failed = false;
             Closeable handle = null;
             try {
-                final boolean mountExploded = deploymentName.endsWith("war");
-                handle = serverDeploymentRepository.mountDeploymentContent(deploymentName, deploymentRuntimeName, deploymentContents, deploymentRoot, mountExploded);
+                final boolean mountExploded = MountExplodedMarker.isMountExploded(deploymentUnit);
+                handle = serverDeploymentRepository.mountDeploymentContent(deploymentContents, deploymentRoot, mountExploded);
                 mountHandle = new MountHandle(handle);
             } catch (IOException e) {
                 failed = true;

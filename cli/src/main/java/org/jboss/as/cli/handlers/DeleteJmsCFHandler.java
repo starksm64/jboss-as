@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.jboss.as.cli.CommandContext;
+import org.jboss.as.cli.CommandFormatException;
 import org.jboss.as.cli.Util;
 import org.jboss.as.cli.impl.ArgumentWithValue;
 import org.jboss.as.cli.impl.DefaultCompleter;
@@ -46,24 +47,21 @@ public class DeleteJmsCFHandler extends BatchModeCommandHandler {
     public DeleteJmsCFHandler() {
         super("delete-jms-cf", true);
 
-        SimpleArgumentTabCompleter argsCompleter = (SimpleArgumentTabCompleter) this.getArgumentCompleter();
-
-        profile = new ArgumentWithValue(new DefaultCompleter(new CandidatesProvider(){
+        profile = new ArgumentWithValue(this, new DefaultCompleter(new CandidatesProvider(){
             @Override
             public List<String> getAllCandidates(CommandContext ctx) {
                 return Util.getNodeNames(ctx.getModelControllerClient(), null, "profile");
             }}), "--profile") {
             @Override
-            public boolean canAppearNext(CommandContext ctx) {
+            public boolean canAppearNext(CommandContext ctx) throws CommandFormatException {
                 if(!ctx.isDomainMode()) {
                     return false;
                 }
                 return super.canAppearNext(ctx);
             }
         };
-        argsCompleter.addArgument(profile);
 
-        name = new ArgumentWithValue(true, new DefaultCompleter(new DefaultCompleter.CandidatesProvider() {
+        name = new ArgumentWithValue(this, new DefaultCompleter(new DefaultCompleter.CandidatesProvider() {
             @Override
             public List<String> getAllCandidates(CommandContext ctx) {
                 ModelControllerClient client = ctx.getModelControllerClient();
@@ -85,14 +83,13 @@ public class DeleteJmsCFHandler extends BatchModeCommandHandler {
                 }
             }), 0, "--name") {
             @Override
-            public boolean canAppearNext(CommandContext ctx) {
+            public boolean canAppearNext(CommandContext ctx) throws CommandFormatException {
                 if(ctx.isDomainMode() && !profile.isPresent(ctx.getParsedArguments())) {
                     return false;
                 }
                 return super.canAppearNext(ctx);
             }
         };
-        argsCompleter.addArgument(name);
     }
 
     /* (non-Javadoc)
@@ -104,7 +101,7 @@ public class DeleteJmsCFHandler extends BatchModeCommandHandler {
         ModelNode request;
         try {
             request = buildRequest(ctx);
-        } catch (OperationFormatException e1) {
+        } catch (CommandFormatException e1) {
             ctx.printLine(e1.getLocalizedMessage());
             return;
         }
@@ -128,15 +125,9 @@ public class DeleteJmsCFHandler extends BatchModeCommandHandler {
     }
 
     @Override
-    public ModelNode buildRequest(CommandContext ctx)
-            throws OperationFormatException {
+    public ModelNode buildRequest(CommandContext ctx) throws CommandFormatException {
 
-        final String name;
-        try {
-            name = this.name.getValue(ctx.getParsedArguments());
-        } catch(IllegalArgumentException e) {
-            throw new OperationFormatException("Missing required name argument.");
-        }
+        final String name = this.name.getValue(ctx.getParsedArguments(), true);
 
         DefaultOperationRequestBuilder builder = new DefaultOperationRequestBuilder();
         if(ctx.isDomainMode()) {

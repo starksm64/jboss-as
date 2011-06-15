@@ -25,7 +25,6 @@ package org.jboss.as.ejb3.deployment.processors;
 import org.jboss.as.ee.component.Attachments;
 import org.jboss.as.ee.component.BindingConfiguration;
 import org.jboss.as.ee.component.ClassConfigurator;
-import org.jboss.as.ee.component.ComponentTypeInjectionSource;
 import org.jboss.as.ee.component.EEModuleClassConfiguration;
 import org.jboss.as.ee.component.EEModuleClassDescription;
 import org.jboss.as.ee.component.EEModuleDescription;
@@ -146,9 +145,9 @@ public class EjbResourceInjectionAnnotationProcessor implements DeploymentUnitPr
         if (!isEmpty(lookup)) {
             valueSource = new LookupInjectionSource(lookup);
         } else if (!isEmpty(beanName)) {
-            valueSource = new EjbBeanNameInjectionSource(beanName, beanInterface);
+            valueSource = new EjbInjectionSource(beanName, beanInterface);
         } else {
-            valueSource = new ComponentTypeInjectionSource(beanInterface);
+            valueSource = new EjbInjectionSource(beanInterface);
         }
 
         // our injection comes from the local lookup, no matter what.
@@ -184,7 +183,12 @@ public class EjbResourceInjectionAnnotationProcessor implements DeploymentUnitPr
             name = stringValueOrNull(annotation, "name");
             beanInterface = classValueOrNull(annotation, "beanInterface");
             beanName = stringValueOrNull(annotation, "beanName");
-            lookup = stringValueOrNull(annotation, "lookup");
+            String lookupValue = stringValueOrNull(annotation, "lookup");
+            // if "lookup" isn't specified, then fallback on "mappedName". We treat "mappedName" the same as "lookup"
+            if (isEmpty(lookupValue)) {
+                lookupValue = stringValueOrNull(annotation, "mappedName");
+            }
+            this.lookup = lookupValue;
             description = stringValueOrNull(annotation, "description");
         }
 

@@ -49,18 +49,12 @@ public class LsHandler extends CommandHandlerWithHelp {
 
     public LsHandler(String command) {
         super(command, true);
-
-        SimpleArgumentTabCompleter argsCompleter = (SimpleArgumentTabCompleter) this.getArgumentCompleter();
-
-        l = new ArgumentWithoutValue("-l");
-        argsCompleter.addArgument(l);
-
-        nodePath = new ArgumentWithValue(false, OperationRequestCompleter.INSTANCE, 0, "--node-path");
-        argsCompleter.addArgument(nodePath);
+        l = new ArgumentWithoutValue(this, "-l");
+        nodePath = new ArgumentWithValue(this, OperationRequestCompleter.INSTANCE, 0, "--node-path");
     }
 
     @Override
-    protected void doHandle(CommandContext ctx) {
+    protected void doHandle(CommandContext ctx) throws CommandFormatException {
 
         final String nodePath = this.nodePath.getValue(ctx.getParsedArguments());
 

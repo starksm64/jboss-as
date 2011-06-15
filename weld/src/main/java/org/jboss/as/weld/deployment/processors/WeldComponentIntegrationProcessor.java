@@ -25,10 +25,11 @@ import org.jboss.as.ee.component.ComponentConfiguration;
 import org.jboss.as.ee.component.ComponentConfigurator;
 import org.jboss.as.ee.component.ComponentDescription;
 import org.jboss.as.ee.component.DependencyConfigurator;
+import org.jboss.as.ee.component.EEApplicationDescription;
 import org.jboss.as.ee.component.EEModuleClassConfiguration;
-import org.jboss.as.ee.component.EEModuleConfiguration;
 import org.jboss.as.ee.component.EEModuleDescription;
 import org.jboss.as.ee.component.InterceptorDescription;
+import org.jboss.as.ee.component.interceptors.InterceptorOrder;
 import org.jboss.as.ejb3.component.session.SessionBeanComponentDescription;
 import org.jboss.as.server.deployment.Attachments;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
@@ -79,14 +80,15 @@ public class WeldComponentIntegrationProcessor implements DeploymentUnitProcesso
                 @Override
                 public void configure(final DeploymentPhaseContext context, final ComponentDescription description, final ComponentConfiguration configuration) throws DeploymentUnitProcessingException {
                     final Class<?> componentClass = configuration.getModuleClassConfiguration().getModuleClass();
-                    final EEModuleConfiguration module = configuration.getModuleClassConfiguration().getModuleConfiguration();
+                    final DeploymentUnit deploymentUnit = context.getDeploymentUnit();
                     final ModuleClassLoader classLoader = deploymentUnit.getAttachment(Attachments.MODULE).getClassLoader();
+                    final EEApplicationDescription applicationDescription = deploymentUnit.getAttachment(org.jboss.as.ee.component.Attachments.EE_APPLICATION_DESCRIPTION);
 
 
                     //get the interceptors so they can be injected as well
                     final Set<Class<?>> interceptorClasses = new HashSet<Class<?>>();
-                    for (InterceptorDescription interceptorDescription : description.getAllInterceptors().values()) {
-                        EEModuleClassConfiguration clazz = module.getClassConfiguration(interceptorDescription.getInterceptorClassName());
+                    for (InterceptorDescription interceptorDescription : description.getAllInterceptors()) {
+                        EEModuleClassConfiguration clazz = applicationDescription.getClassConfiguration(interceptorDescription.getInterceptorClassName());
                         if (clazz != null) {
                             interceptorClasses.add(clazz.getModuleClass());
                         }
@@ -95,7 +97,7 @@ public class WeldComponentIntegrationProcessor implements DeploymentUnitProcesso
 
                     addWeldInstantiator(context.getServiceTarget(), configuration, componentClass, beanName, deploymentUnit.getServiceName(), beanManagerServiceName, interceptorClasses, classLoader);
 
-                    configuration.getPostConstructInterceptors().addLast(new WeldInjectionInterceptor.Factory(configuration, interceptorClasses));
+                    configuration.addPostConstructInterceptor(new WeldInjectionInterceptor.Factory(configuration, interceptorClasses), InterceptorOrder.ComponentPostConstruct.WELD_INJECTION);
                 }
             });
 

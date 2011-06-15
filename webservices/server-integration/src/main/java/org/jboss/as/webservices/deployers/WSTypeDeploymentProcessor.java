@@ -21,7 +21,6 @@
  */
 package org.jboss.as.webservices.deployers;
 
-import org.jboss.as.ee.structure.DeploymentTypeMarker;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.as.server.deployment.DeploymentUnit;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
@@ -29,7 +28,6 @@ import org.jboss.as.server.deployment.DeploymentUnitProcessor;
 import org.jboss.as.web.deployment.WarMetaData;
 import org.jboss.as.webservices.util.ASHelper;
 import org.jboss.as.webservices.util.WSAttachmentKeys;
-import org.jboss.jandex.Index;
 import org.jboss.wsf.spi.deployment.Deployment.DeploymentType;
 
 /**
@@ -51,8 +49,6 @@ public final class WSTypeDeploymentProcessor implements DeploymentUnitProcessor 
             unit.putAttachment(WSAttachmentKeys.DEPLOYMENT_TYPE_KEY, DeploymentType.JAXRPC_JSE);
         } else if (this.isJaxrpcEjbDeployment(unit)) {
             unit.putAttachment(WSAttachmentKeys.DEPLOYMENT_TYPE_KEY, DeploymentType.JAXRPC_EJB21);
-        } else if (this.isJaxwsJmsDeployment(unit)) {
-            unit.putAttachment(WSAttachmentKeys.DEPLOYMENT_TYPE_KEY, DeploymentType.JAXWS_JMS);
         }
     }
 
@@ -100,13 +96,7 @@ public final class WSTypeDeploymentProcessor implements DeploymentUnitProcessor 
      * @return true if JAXWS EJB, false otherwise
      */
     private boolean isJaxwsEjbDeployment(final DeploymentUnit unit) {
-        final boolean hasWSDeployment = ASHelper.hasAttachment(unit, WSAttachmentKeys.WEBSERVICE_DEPLOYMENT_KEY);
-
-        if (hasWSDeployment) {
-            return ASHelper.getJaxwsEjbs(unit).size() > 0;
-        }
-
-        return false;
+        return ASHelper.hasAttachment(unit, WSAttachmentKeys.WEBSERVICE_DEPLOYMENT_KEY);
     }
 
     /**
@@ -116,26 +106,14 @@ public final class WSTypeDeploymentProcessor implements DeploymentUnitProcessor 
      * @return true if JAXWS JSE, false otherwise
      */
     private boolean isJaxwsJseDeployment(final DeploymentUnit unit) {
-        // TODO: rewrite, see above
-        if (DeploymentTypeMarker.isType(org.jboss.as.ee.structure.DeploymentType.WAR, unit)) {
-            final Index index = ASHelper.getRootAnnotationIndex(unit);
-            final WarMetaData warMetaData = ASHelper.getOptionalAttachment(unit, WarMetaData.ATTACHMENT_KEY);
-            if (warMetaData != null && warMetaData.getWebMetaData() != null) {
-                return (ASHelper.selectWebServiceServlets(index, warMetaData.getWebMetaData().getServlets(), true).size() > 0);
-            }
+        final boolean hasWarMetaData = ASHelper.hasAttachment(unit, WarMetaData.ATTACHMENT_KEY);
+        if (hasWarMetaData) {
+            //once the deployment is a WAR, the endpoint(s) can be on either http (servlet) transport or jms transport
+            return ASHelper.getJaxwsServlets(unit).size() > 0 || ASHelper.hasAttachment(unit, WSAttachmentKeys.JMS_ENDPOINT_METADATA_KEY);
+        } else {
+            //otherwise the (JAR) deployment can be a jaxws_jse one if there're jms transport endpoints only (no ejb3)
+            return !ASHelper.hasAttachment(unit, WSAttachmentKeys.WEBSERVICE_DEPLOYMENT_KEY) &&
+                    ASHelper.hasAttachment(unit, WSAttachmentKeys.JMS_ENDPOINT_METADATA_KEY);
         }
-
-        return false;
     }
-
-    /**
-     * Returns true if JAXWS JMS deployment is detected.
-     *
-     * @param unit deployment unit
-     * @return true if JAXWS JMS, false otherwise
-     */
-    private boolean isJaxwsJmsDeployment(final DeploymentUnit unit) {
-        return ASHelper.hasAttachment(unit, WSAttachmentKeys.JMS_ENDPOINT_METADATA_KEY);
-    }
-
 }

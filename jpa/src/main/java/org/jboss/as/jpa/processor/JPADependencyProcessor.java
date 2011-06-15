@@ -44,23 +44,24 @@ public class JPADependencyProcessor implements DeploymentUnitProcessor {
     private static ModuleIdentifier JAVAEE_API_ID = ModuleIdentifier.create("javaee.api");
     private static ModuleIdentifier JBOSS_AS_JPA_ID = ModuleIdentifier.create("org.jboss.as.jpa");
     private static ModuleIdentifier JBOSS_HIBERNATE_ID = ModuleIdentifier.create("org.hibernate");
-    private static ModuleIdentifier JAVASSIST_ID =  ModuleIdentifier.create("org.javassist");
+    private static ModuleIdentifier JAVASSIST_ID = ModuleIdentifier.create("org.javassist");
     private static ModuleIdentifier NAMING_ID = ModuleIdentifier.create("org.jboss.as.naming");
 
 
     /**
      * Add dependencies for modules required for JPA deployments
-     *
      */
     public void deploy(DeploymentPhaseContext phaseContext) throws DeploymentUnitProcessingException {
         final DeploymentUnit deploymentUnit = phaseContext.getDeploymentUnit();
         final ModuleSpecification moduleSpecification = deploymentUnit.getAttachment(Attachments.MODULE_SPECIFICATION);
+        final ModuleLoader moduleLoader = Module.getBootModuleLoader();
+        addDependency(moduleSpecification, moduleLoader, JAVAX_PERSISTENCE_API_ID);
+
+
         // TODO:  (JBAS-9034) also check if the deployment uses JPA (has @PersistenceUnit, @PersistenceContext or persistence.xml)
         if (!JPADeploymentMarker.isJPADeployment(deploymentUnit)) {
             return; // Skip if there are no persistence use in the deployment
         }
-        final ModuleLoader moduleLoader = Module.getBootModuleLoader();
-        addDependency(moduleSpecification, moduleLoader, JAVAX_PERSISTENCE_API_ID);
         addDependency(moduleSpecification, moduleLoader, JAVAEE_API_ID);
         addDependency(moduleSpecification, moduleLoader, JBOSS_AS_JPA_ID);
         addDependency(moduleSpecification, moduleLoader, JBOSS_HIBERNATE_ID);
@@ -70,7 +71,7 @@ public class JPADependencyProcessor implements DeploymentUnitProcessor {
 
     private void addDependency(ModuleSpecification moduleSpecification, ModuleLoader moduleLoader,
                                ModuleIdentifier moduleIdentifier) {
-        moduleSpecification.addDependency(new ModuleDependency(moduleLoader, moduleIdentifier, false, false, false));
+        moduleSpecification.addSystemDependency(new ModuleDependency(moduleLoader, moduleIdentifier, false, false, false));
     }
 
     @Override

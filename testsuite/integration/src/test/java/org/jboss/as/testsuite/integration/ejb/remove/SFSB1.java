@@ -22,11 +22,9 @@
 
 package org.jboss.as.testsuite.integration.ejb.remove;
 
-import org.jboss.as.testsuite.integration.jpa.transaction.Employee;
-
+import javax.annotation.PreDestroy;
 import javax.ejb.Remove;
 import javax.ejb.Stateful;
-import javax.transaction.UserTransaction;
 
 /**
  * stateful session bean
@@ -36,6 +34,12 @@ import javax.transaction.UserTransaction;
 @Stateful
 public class SFSB1 {
 
+    public static volatile boolean preDestroyCalled = false;
+
+    @PreDestroy
+    private void preDestroy() {
+        preDestroyCalled = true;
+    }
 
     // always throws a TransactionRequiredException
     @Remove

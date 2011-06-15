@@ -23,11 +23,9 @@ package org.jboss.as.weld.ejb;
 
 import org.jboss.as.ee.component.ViewDescription;
 import org.jboss.as.ejb3.component.EJBComponentDescription;
+import org.jboss.as.ejb3.component.EJBViewDescription;
 import org.jboss.as.ejb3.component.MethodIntf;
 import org.jboss.as.ejb3.component.session.SessionBeanComponentDescription;
-import org.jboss.as.ejb3.component.singleton.SingletonComponentDescription;
-import org.jboss.as.ejb3.component.stateful.StatefulComponentDescription;
-import org.jboss.as.ejb3.component.stateless.StatelessComponentDescription;
 import org.jboss.as.server.deployment.DeploymentUnit;
 import org.jboss.as.weld.deployment.BeanDeploymentArchiveImpl;
 import org.jboss.msc.service.ServiceName;
@@ -60,8 +58,8 @@ public class EjbDescriptorImpl<T> implements EjbDescriptor<T> {
         final Set<BusinessInterfaceDescriptor<?>> localInterfaces = new HashSet<BusinessInterfaceDescriptor<?>>();
         if (componentDescription.getViews() != null) {
             for (ViewDescription view : componentDescription.getViews()) {
-                String viewClassName = view.getViewClassName();
-                if(description == null || description.getMethodIntf(viewClassName) == MethodIntf.LOCAL) {
+                if (description == null || getMethodIntf(view) == MethodIntf.LOCAL) {
+                    final String viewClassName = view.getViewClassName();
                     localInterfaces.add(new BusinessInterfaceDescriptorImpl<Object>(beanDeploymentArchive, viewClassName));
                 }
             }
@@ -70,6 +68,14 @@ public class EjbDescriptorImpl<T> implements EjbDescriptor<T> {
         this.baseName = deploymentUnit.getServiceName().append("component").append(componentDescription.getComponentName());
     }
 
+    private MethodIntf getMethodIntf(final ViewDescription view) {
+        if (view instanceof EJBViewDescription) {
+            final EJBViewDescription ejbView = (EJBViewDescription) view;
+            return ejbView.getMethodIntf();
+        }
+
+        return null;
+    }
 
     @Override
     public Class<T> getBeanClass() {
@@ -99,23 +105,22 @@ public class EjbDescriptorImpl<T> implements EjbDescriptor<T> {
 
     @Override
     public boolean isStateless() {
-        return componentDescription instanceof StatelessComponentDescription;
+        return componentDescription.isStateless();
     }
 
     @Override
     public boolean isSingleton() {
-        return componentDescription instanceof SingletonComponentDescription;
+        return componentDescription.isSingleton();
     }
 
     @Override
     public boolean isStateful() {
-        return componentDescription instanceof StatefulComponentDescription;
+        return componentDescription.isStateful();
     }
 
     @Override
     public boolean isMessageDriven() {
-        //TODO: message driven beans
-        return false;
+        return componentDescription.isMessageDriven();
     }
 
     public EJBComponentDescription getComponentDescription() {

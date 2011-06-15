@@ -21,8 +21,22 @@
  */
 package org.jboss.as.webservices.invocation;
 
-import org.jboss.as.ejb3.component.session.SessionBeanComponent;
+import java.lang.reflect.Method;
+import java.security.Principal;
+import java.util.Collection;
+
+import javax.naming.Context;
+import javax.naming.NamingException;
+import javax.xml.ws.EndpointReference;
+import javax.xml.ws.WebServiceContext;
+import javax.xml.ws.WebServiceException;
+import javax.xml.ws.handler.MessageContext;
+
+import org.jboss.as.ee.component.Component;
+import org.jboss.as.ee.component.ComponentView;
+import org.jboss.as.ee.component.ComponentViewInstance;
 import org.jboss.as.webservices.util.ASHelper;
+import org.jboss.invocation.InterceptorContext;
 import org.jboss.ws.common.injection.ThreadLocalAwareWebServiceContext;
 import org.jboss.ws.common.invocation.AbstractInvocationHandler;
 import org.jboss.wsf.spi.SPIProvider;
@@ -34,19 +48,6 @@ import org.jboss.wsf.spi.invocation.integration.InvocationContextCallback;
 import org.jboss.wsf.spi.ioc.IoCContainerProxy;
 import org.jboss.wsf.spi.ioc.IoCContainerProxyFactory;
 import org.w3c.dom.Element;
-
-import javax.naming.Context;
-import javax.naming.NamingException;
-import javax.xml.ws.EndpointReference;
-import javax.xml.ws.WebServiceContext;
-import javax.xml.ws.WebServiceException;
-import javax.xml.ws.handler.MessageContext;
-import java.io.Serializable;
-import java.lang.reflect.Method;
-import java.security.Principal;
-import java.util.Map;
-
-//import javax.ejb.embeddable.EJBContainer; // TODO: needed?
 
 /**
  * Handles invocations on EJB3 endpoints.
@@ -62,10 +63,10 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
    private final IoCContainerProxy iocContainer;
 
    /** EJB3 container name. */
-   private String containerName;
+   private String ejbName;
 
    /** EJB3 container. */
-   private SessionBeanComponent serviceEndpointContainer;
+   private volatile ComponentViewInstance ejbContainer;
 
    /**
     * Constructor.
@@ -73,7 +74,7 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
    InvocationHandlerEJB3() {
       final SPIProvider spiProvider = SPIProviderResolver.getInstance().getProvider();
       final IoCContainerProxyFactory iocContainerFactory = spiProvider.getSPI(IoCContainerProxyFactory.class);
-      this.iocContainer = iocContainerFactory.getContainer();
+      iocContainer = iocContainerFactory.getContainer();
    }
 
    /**
@@ -82,9 +83,9 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
     * @param endpoint web service endpoint
     */
    public void init(final Endpoint endpoint) {
-      this.containerName = (String) endpoint.getProperty(ASHelper.CONTAINER_NAME);
+      ejbName = (String) endpoint.getProperty(ASHelper.CONTAINER_NAME);
 
-      if (this.containerName == null) {
+      if (ejbName == null) {
          throw new IllegalArgumentException("Container name cannot be null");
       }
    }
@@ -94,17 +95,20 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
     *
     * @return EJB3 container
     */
-   private synchronized SessionBeanComponent getEjb3Container() {
-      final boolean ejb3ContainerNotInitialized = this.serviceEndpointContainer == null;
-
-      if (ejb3ContainerNotInitialized) {
-         this.serviceEndpointContainer = this.iocContainer.getBean(this.containerName, SessionBeanComponent.class);
-         if (this.serviceEndpointContainer == null) {
-            throw new WebServiceException("Cannot find service endpoint target: " + this.containerName);
+   private ComponentViewInstance getEjb3Container() {
+      if (ejbContainer == null) {
+         synchronized(this) {
+            if (ejbContainer == null) {
+               final ComponentView ejbView = iocContainer.getBean(ejbName, ComponentView.class);
+               if (ejbView == null) {
+                  throw new WebServiceException("Cannot find ejb: " + ejbName);
+               }
+               ejbContainer = ejbView.createInstance();
+            }
          }
       }
 
-      return this.serviceEndpointContainer;
+      return ejbContainer;
    }
 
    /**
@@ -117,29 +121,38 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
    public void invoke(final Endpoint endpoint, final Invocation wsInvocation) throws Exception {
       try {
          // prepare for invocation
-         this.onBeforeInvocation(wsInvocation);
-
-         final SessionBeanComponent ejbContainer = this.getEjb3Container();
-
-         final Method seiMethod = wsInvocation.getJavaMethod();
-         final Serializable sessionId = null; // Not applicable
-         // Interceptors 1.1 / EJB 3.1 FR 12.6
-         final Map<String, Object> contextData = getWebServiceContext(wsInvocation).getMessageContext();
-         // TODO: should we know it is MethodIntf.SERVICE_ENDPOINT?
-         final Class<?> invokedBusinessInterface = null;
-         final Method implMethod = seiMethod; // TODO -- ?? ejbContainer.getComponentMethod(seiMethod);
-         final Object[] args = wsInvocation.getArgs();
+         onBeforeInvocation(wsInvocation);
+         // prepare invocation data
+         final ComponentViewInstance ejbInstance = getEjb3Container();
+         final Method method = getEJBMethod(wsInvocation.getJavaMethod(), ejbInstance.allowedMethods());
+         final InterceptorContext context = new InterceptorContext();
+         context.setMethod(method);
+         context.setContextData(getWebServiceContext(wsInvocation).getMessageContext());
+         context.setParameters(wsInvocation.getArgs());
+         context.setTarget(ejbInstance.createProxy());
+         context.putPrivateData(Component.class, ejbInstance.getComponent());
          // invoke method
-         final Object retObj = ejbContainer.invoke(sessionId, contextData, invokedBusinessInterface, implMethod, args);
+         final Object retObj = ejbInstance.getEntryPoint(method).processInvocation(context);
+         // set return value
          wsInvocation.setReturnValue(retObj);
       }
       catch (Throwable t) {
-         this.log.error("Method invocation failed with exception: " + t.getMessage(), t);
-         this.handleInvocationException(t);
+         log.error("Method invocation failed with exception: " + t.getMessage(), t);
+         handleInvocationException(t);
       }
       finally {
-         this.onAfterInvocation(wsInvocation);
+         onAfterInvocation(wsInvocation);
       }
+   }
+
+   private Method getEJBMethod(final Method seiMethod, final Collection<Method> methods) {
+       for (final Method method : methods) {
+           if (seiMethod.equals(method)) {
+               return method;
+           }
+       }
+
+       throw new IllegalStateException();
    }
 
    public Context getJNDIContext(final Endpoint ep) throws NamingException {
@@ -155,7 +168,7 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
     */
    @Override
    public void onBeforeInvocation(final Invocation invocation) {
-      final WebServiceContext wsContext = this.getWebServiceContext(invocation);
+      final WebServiceContext wsContext = getWebServiceContext(invocation);
       ThreadLocalAwareWebServiceContext.getInstance().setMessageContext(wsContext);
    }
 
@@ -189,7 +202,7 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
       }
 
       public MessageContext getMessageContext() {
-         return this.delegate.getMessageContext();
+         return delegate.getMessageContext();
       }
 
       public Principal getUserPrincipal() {
@@ -235,7 +248,7 @@ final class InvocationHandlerEJB3 extends AbstractInvocationHandler {
        * @return attachment value
        */
       public <T> T get(final Class<T> attachmentType) {
-         return this.wsInvocation.getInvocationContext().getAttachment(attachmentType);
+         return wsInvocation.getInvocationContext().getAttachment(attachmentType);
       }
    }
 }

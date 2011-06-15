@@ -29,6 +29,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.jboss.as.cli.CommandContext;
+import org.jboss.as.cli.CommandFormatException;
 import org.jboss.as.cli.CommandLineCompleter;
 import org.jboss.as.cli.ParsedArguments;
 import org.jboss.as.cli.Util;
@@ -59,14 +60,11 @@ public class DeployHandler extends BatchModeCommandHandler {
     public DeployHandler() {
         super("deploy", true);
 
-        SimpleArgumentTabCompleter argsCompleter = (SimpleArgumentTabCompleter) this.getArgumentCompleter();
-
-        l = new ArgumentWithoutValue("-l");
+        l = new ArgumentWithoutValue(this, "-l");
         l.setExclusive(true);
-        argsCompleter.addArgument(l);
 
         FilenameTabCompleter pathCompleter = Util.isWindows() ? WindowsFilenameTabCompleter.INSTANCE : DefaultFilenameTabCompleter.INSTANCE;
-        path = new ArgumentWithValue(false, pathCompleter, 0, "--path") {
+        path = new ArgumentWithValue(this, pathCompleter, 0, "--path") {
             @Override
             public String getValue(ParsedArguments args) {
                 String value = super.getValue(args);
@@ -79,18 +77,20 @@ public class DeployHandler extends BatchModeCommandHandler {
             }
         };
         path.addCantAppearAfter(l);
-        argsCompleter.addArgument(path);
 
-        force = new ArgumentWithoutValue("--force", "-f");
+        force = new ArgumentWithoutValue(this, "--force", "-f");
         force.addRequiredPreceding(path);
-        argsCompleter.addArgument(force);
 
-        name = new ArgumentWithValue( new CommandLineCompleter() {
+        name = new ArgumentWithValue(this, new CommandLineCompleter() {
             @Override
             public int complete(CommandContext ctx, String buffer, int cursor, List<String> candidates) {
 
                 ParsedArguments args = ctx.getParsedArguments();
-                if(path.isPresent(args)) {
+                try {
+                    if(path.isPresent(args)) {
+                        return -1;
+                    }
+                } catch (CommandFormatException e) {
                     return -1;
                 }
 
@@ -128,15 +128,13 @@ public class DeployHandler extends BatchModeCommandHandler {
         path.addCantAppearAfter(l);
         path.addCantAppearAfter(name);
         //name.addRequiredPreceding(path);
-        argsCompleter.addArgument(name);
 
-        rtName = new ArgumentWithValue("--runtime-name");
+        rtName = new ArgumentWithValue(this, "--runtime-name");
         rtName.addRequiredPreceding(path);
-        argsCompleter.addArgument(rtName);
 
-        allServerGroups = new ArgumentWithoutValue("--all-server-groups")  {
+        allServerGroups = new ArgumentWithoutValue(this, "--all-server-groups")  {
             @Override
-            public boolean canAppearNext(CommandContext ctx) {
+            public boolean canAppearNext(CommandContext ctx) throws CommandFormatException {
                 if(!ctx.isDomainMode()) {
                     return false;
                 }
@@ -144,11 +142,10 @@ public class DeployHandler extends BatchModeCommandHandler {
             }
         };
 
-        argsCompleter.addArgument(allServerGroups);
         allServerGroups.addRequiredPreceding(path);
         allServerGroups.addRequiredPreceding(name);
 
-        serverGroups = new ArgumentWithValue(false, new CommandLineCompleter() {
+        serverGroups = new ArgumentWithValue(this, new CommandLineCompleter() {
             @Override
             public int complete(CommandContext ctx, String buffer, int cursor, List<String> candidates) {
                 List<String> allGroups = Util.getServerGroups(ctx.getModelControllerClient());
@@ -190,27 +187,25 @@ public class DeployHandler extends BatchModeCommandHandler {
                 return result;
             }}, "--server-groups") {
             @Override
-            public boolean canAppearNext(CommandContext ctx) {
+            public boolean canAppearNext(CommandContext ctx) throws CommandFormatException {
                 if(!ctx.isDomainMode()) {
                     return false;
                 }
                 return super.canAppearNext(ctx);
             }
         };
-        argsCompleter.addArgument(serverGroups);
         serverGroups.addRequiredPreceding(path);
         serverGroups.addRequiredPreceding(name);
 
         serverGroups.addCantAppearAfter(allServerGroups);
         allServerGroups.addCantAppearAfter(serverGroups);
 
-        disabled = new ArgumentWithoutValue("--disabled");
-        argsCompleter.addArgument(disabled);
+        disabled = new ArgumentWithoutValue(this, "--disabled");
         disabled.addRequiredPreceding(path);
     }
 
     @Override
-    protected void doHandle(CommandContext ctx) {
+    protected void doHandle(CommandContext ctx) throws CommandFormatException {
 
         ModelControllerClient client = ctx.getModelControllerClient();
 
@@ -227,6 +222,10 @@ public class DeployHandler extends BatchModeCommandHandler {
             f = new File(path);
             if(!f.exists()) {
                 ctx.printLine("Path " + f.getAbsolutePath() + " doesn't exist.");
+                return;
+            }
+            if(f.isDirectory()) {
+                ctx.printLine(f.getAbsolutePath() + " is a directory.");
                 return;
             }
         } else {
@@ -279,7 +278,7 @@ public class DeployHandler extends BatchModeCommandHandler {
 
                 ctx.printLine("'" + name + "' re-deployed successfully.");
             } else {
-                ctx.printLine("'" + name + "' is already deployed (use " + force.getDefaultName() + " to force re-deploy).");
+                ctx.printLine("'" + name + "' is already deployed (use " + force.getFullName() + " to force re-deploy).");
             }
 
             return;
@@ -384,33 +383,35 @@ public class DeployHandler extends BatchModeCommandHandler {
         }
     }
 
-    public ModelNode buildRequest(CommandContext ctx) throws OperationFormatException {
+    public ModelNode buildRequest(CommandContext ctx) throws CommandFormatException {
 
         ParsedArguments args = ctx.getParsedArguments();
         if (!args.hasArguments()) {
             throw new OperationFormatException("Required arguments are missing.");
         }
 
-        final String filePath;
-        try {
-            filePath = path.getValue(args);
-        } catch(IllegalArgumentException e) {
-            throw new OperationFormatException("Missing required path argument.");
-        }
+        final String filePath = path.getValue(args);
         String name = this.name.getValue(args);
         String runtimeName = rtName.getValue(args);
 
+        final File f;
+        if(filePath != null ) {
+            f = new File(filePath);
+            if(!f.exists()) {
+                throw new OperationFormatException(f.getAbsolutePath() + " doesn't exist.");
+            }
 
-        File f = new File(filePath);
-        if(!f.exists()) {
-            throw new OperationFormatException(f.getAbsolutePath() + " doesn't exist.");
+            if(name == null) {
+                name = f.getName();
+            }
+        } else {
+            f = null;
+            if(name == null) {
+                throw new CommandFormatException("Either file path or --name has to be specified.");
+            }
         }
 
-        if(name == null) {
-            name = f.getName();
-        }
-
-        if(Util.isDeploymentInRepository(name, ctx.getModelControllerClient())) {
+        if(Util.isDeploymentInRepository(name, ctx.getModelControllerClient()) && f != null) {
             if(force.isPresent(args)) {
                 DefaultOperationRequestBuilder builder = new DefaultOperationRequestBuilder();
 
@@ -423,7 +424,7 @@ public class DeployHandler extends BatchModeCommandHandler {
                 }
 
                 byte[] bytes = readBytes(f);
-                builder.getModelNode().get("bytes").set(bytes);
+                builder.getModelNode().get("content").get(0).get("bytes").set(bytes);
                 return builder.buildRequest();
             } else {
                 throw new OperationFormatException("'" + name + "' is already deployed (use -f to force re-deploy).");
@@ -437,12 +438,12 @@ public class DeployHandler extends BatchModeCommandHandler {
             } else {
                 String serverGroupsStr = this.serverGroups.getValue(args);
                 if(serverGroupsStr == null) {
-                    new OperationFormatException("Either --all-server-groups or --server-groups must be specified.");
+                    throw new OperationFormatException("Either --all-server-groups or --server-groups must be specified.");
                 }
                 serverGroups = Arrays.asList(serverGroupsStr.split(","));
             }
 
-            if(serverGroups.isEmpty()) {
+            if(serverGroups.isEmpty() && !disabled.isPresent(args)) {
                 new OperationFormatException("No server group is available.");
             }
         } else {
@@ -457,16 +458,18 @@ public class DeployHandler extends BatchModeCommandHandler {
         DefaultOperationRequestBuilder builder;
 
         // add
-        builder = new DefaultOperationRequestBuilder();
-        builder.setOperationName("add");
-        builder.addNode("deployment", name);
-        if (runtimeName != null) {
-            builder.addProperty("runtime-name", runtimeName);
-        }
+        if (f != null) {
+            builder = new DefaultOperationRequestBuilder();
+            builder.setOperationName("add");
+            builder.addNode("deployment", name);
+            if (runtimeName != null) {
+                builder.addProperty("runtime-name", runtimeName);
+            }
 
-        byte[] bytes = readBytes(f);
-        builder.getModelNode().get("bytes").set(bytes);
-        steps.add(builder.buildRequest());
+            byte[] bytes = readBytes(f);
+            builder.getModelNode().get("content").get(0).get("bytes").set(bytes);
+            steps.add(builder.buildRequest());
+        }
 
         if(!disabled.isPresent(args)) {
             // deploy

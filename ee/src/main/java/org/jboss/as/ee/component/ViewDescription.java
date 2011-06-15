@@ -22,6 +22,7 @@
 
 package org.jboss.as.ee.component;
 
+import org.jboss.as.ee.component.interceptors.InterceptorOrder;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
 import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
 import org.jboss.as.server.deployment.reflect.ClassReflectionIndex;
@@ -31,6 +32,7 @@ import org.jboss.invocation.ImmediateInterceptorFactory;
 import org.jboss.invocation.Interceptor;
 import org.jboss.invocation.InterceptorContext;
 import org.jboss.invocation.Interceptors;
+import org.jboss.invocation.proxy.ProxyFactory;
 import org.jboss.msc.service.ServiceName;
 
 import java.lang.reflect.Method;
@@ -110,6 +112,17 @@ public class ViewDescription {
     }
 
     /**
+     * Creates view configuration. Allows for extensibility in EE sub components.
+     * @param viewClass view class
+     * @param componentConfiguration component config
+     * @param proxyFactory proxy factory
+     * @return new view configuration
+     */
+    public ViewConfiguration createViewConfiguration(final Class<?> viewClass, final ComponentConfiguration componentConfiguration, final ProxyFactory<?> proxyFactory) {
+        return new ViewConfiguration(viewClass, componentConfiguration, getServiceName(), proxyFactory);
+    }
+
+    /**
      * Get the set of binding names for this view.
      *
      * @return the set of binding names
@@ -143,15 +156,15 @@ public class ViewDescription {
             Method[] methods = configuration.getProxyFactory().getCachedMethods();
             for (Method method : methods) {
                 final Method componentMethod = ClassReflectionIndexUtil.findRequiredMethod(reflectionIndex, index, method);
-                configuration.getViewInterceptorDeque(method).addLast(new ImmediateInterceptorFactory(new ComponentDispatcherInterceptor(componentMethod)));
-                configuration.getClientInterceptorDeque(method).addLast(CLIENT_DISPATCHER_INTERCEPTOR_FACTORY);
+                configuration.addViewInterceptor(method,new ImmediateInterceptorFactory(new ComponentDispatcherInterceptor(componentMethod)), InterceptorOrder.View.COMPONENT_DISPATCHER);
+                configuration.addClientInterceptor(method, CLIENT_DISPATCHER_INTERCEPTOR_FACTORY, InterceptorOrder.Client.CLIENT_DISPATCHER);
             }
 
-            configuration.getViewPostConstructInterceptors().addLast(Interceptors.getTerminalInterceptorFactory());
-            configuration.getViewPreDestroyInterceptors().addLast(Interceptors.getTerminalInterceptorFactory());
+            configuration.addViewPostConstructInterceptor(Interceptors.getTerminalInterceptorFactory(), InterceptorOrder.ViewPostConstruct.TERMINAL_INTERCEPTOR);
+            configuration.addViewPreDestroyInterceptor(Interceptors.getTerminalInterceptorFactory(), InterceptorOrder.ViewPreDestroy.TERMINAL_INTERCEPTOR);
 
-            configuration.getClientPostConstructInterceptors().addLast(Interceptors.getTerminalInterceptorFactory());
-            configuration.getClientPreDestroyInterceptors().addLast(Interceptors.getTerminalInterceptorFactory());
+            configuration.addClientPostConstructInterceptor(Interceptors.getTerminalInterceptorFactory(), InterceptorOrder.ClientPostConstruct.TERMINAL_INTERCEPTOR);
+            configuration.addClientPreDestroyInterceptor(Interceptors.getTerminalInterceptorFactory(), InterceptorOrder.ClientPreDestroy.TERMINAL_INTERCEPTOR);
 
             // Create view bindings
             final List<BindingConfiguration> bindingConfigurations = configuration.getBindingConfigurations();

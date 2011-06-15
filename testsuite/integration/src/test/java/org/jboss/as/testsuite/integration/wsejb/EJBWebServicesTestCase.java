@@ -21,16 +21,15 @@
  */
 package org.jboss.as.testsuite.integration.wsejb;
 
-import org.jboss.arquillian.api.Deployment;
+import static java.util.concurrent.TimeUnit.SECONDS;
+
+import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.junit.Arquillian;
 import org.jboss.as.testsuite.integration.common.HttpRequest;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
 import org.jboss.shrinkwrap.api.spec.JavaArchive;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * EJB 3.1 FR 3.2.4 Stateless session beans and Singleton session beans may have web service clients.
@@ -39,6 +38,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  */
 @RunWith(Arquillian.class)
 public class EJBWebServicesTestCase {
+
     @Deployment
     public static JavaArchive deployment() {
         return ShrinkWrap.create(JavaArchive.class, "ejbws-example.jar")
@@ -60,11 +60,11 @@ public class EJBWebServicesTestCase {
         System.out.println(result);
     }
 
-    @Ignore
     @Test
     public void testSingletonWSDL() throws Exception {
         final String wsdl = HttpRequest.get("http://localhost:8080/ejbws-example/SingletonEndpoint?wsdl", 10, SECONDS);
         // TODO: check something
         System.out.println(wsdl);
     }
+
 }

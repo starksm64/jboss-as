@@ -40,14 +40,14 @@ import org.jboss.as.ee.component.ResourceInjectionConfiguration;
 import org.jboss.as.ee.component.ViewConfiguration;
 import org.jboss.as.ee.component.ViewConfigurator;
 import org.jboss.as.ee.component.ViewDescription;
-import org.jboss.as.ejb3.component.stateful.StatefulComponentDescription;
-import org.jboss.as.ejb3.component.stateless.StatelessComponentDescription;
+import org.jboss.as.ee.component.interceptors.InterceptorOrder;
+import org.jboss.as.ejb3.component.session.SessionBeanComponentDescription;
 import org.jboss.as.jpa.container.PersistenceUnitSearch;
 import org.jboss.as.jpa.injectors.PersistenceContextInjectionSource;
 import org.jboss.as.jpa.injectors.PersistenceUnitInjectionSource;
 import org.jboss.as.jpa.interceptor.SBInvocationInterceptor;
-import org.jboss.as.jpa.interceptor.SFSBCreateInterceptorFactory;
-import org.jboss.as.jpa.interceptor.SFSBDestroyInterceptorFactory;
+import org.jboss.as.jpa.interceptor.SFSBCreateInterceptor;
+import org.jboss.as.jpa.interceptor.SFSBDestroyInterceptor;
 import org.jboss.as.jpa.interceptor.SFSBInvocationInterceptor;
 import org.jboss.as.jpa.service.PersistenceUnitService;
 import org.jboss.as.server.deployment.DeploymentPhaseContext;
@@ -68,7 +68,6 @@ import org.jboss.msc.service.ServiceName;
 import javax.persistence.PersistenceContext;
 import javax.persistence.PersistenceContextType;
 import javax.persistence.PersistenceUnit;
-import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -114,7 +113,8 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
 
     }
 
-    private void processPersistenceAnnotations(final DeploymentUnit deploymentUnit, final EEModuleDescription eeModuleDescription, List<AnnotationInstance> persistenceContexts) throws DeploymentUnitProcessingException {
+    private void processPersistenceAnnotations(final DeploymentUnit deploymentUnit, final EEModuleDescription eeModuleDescription, List<AnnotationInstance> persistenceContexts) throws
+            DeploymentUnitProcessingException {
         for (AnnotationInstance annotation : persistenceContexts) {
             ClassInfo declaringClass = null;
             final AnnotationTarget annotationTarget = annotation.target();
@@ -138,17 +138,20 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
             if (declaringClass != null) {
                 // TODO: This may not always work? For example : What if this deployer runs before the components have been
                 // added to the EEModuleDescription?
-                ComponentDescription componentDescription = eeModuleDescription.getComponentByClassName(declaringClass.name().toString());
+                List<ComponentDescription> componentDescriptions = eeModuleDescription.getComponentsByClassName(declaringClass.name().toString());
                 // if it's a component then setup the interceptors
-                if (componentDescription != null) {
-                    this.registerInterceptorsForExtendedPersistenceContext(componentDescription, annotation);
+                for (ComponentDescription componentDescription : componentDescriptions) {
+                    if (componentDescription instanceof SessionBeanComponentDescription) {
+                        this.registerInterceptorsForExtendedPersistenceContext((SessionBeanComponentDescription) componentDescription, annotation);
+                    }
                 }
             }
         }
     }
 
     private void processField(final DeploymentUnit deploymentUnit, final AnnotationInstance annotation, final FieldInfo fieldInfo,
-                              final EEModuleClassDescription eeModuleClassDescription) throws DeploymentUnitProcessingException {
+                              final EEModuleClassDescription eeModuleClassDescription) throws
+            DeploymentUnitProcessingException {
 
         final String fieldName = fieldInfo.name();
         final AnnotationValue declaredNameValue = annotation.value("name");
@@ -170,7 +173,8 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
         // add the binding configuration to the class description
         eeModuleClassDescription.getConfigurators().add(new ClassConfigurator() {
             @Override
-            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws DeploymentUnitProcessingException {
+            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws
+                    DeploymentUnitProcessingException {
                 configuration.getBindingConfigurations().add(bindingConfiguration);
             }
         });
@@ -182,14 +186,16 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
         final ResourceInjectionConfiguration injectionConfiguration = new ResourceInjectionConfiguration(injectionTarget, injectionSource);
         eeModuleClassDescription.getConfigurators().add(new ClassConfigurator() {
             @Override
-            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws DeploymentUnitProcessingException {
+            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws
+                    DeploymentUnitProcessingException {
                 configuration.getInjectionConfigurations().add(injectionConfiguration);
             }
         });
     }
 
     private void processMethod(final DeploymentUnit deploymentUnit, final AnnotationInstance annotation, final MethodInfo methodInfo,
-                               final EEModuleClassDescription eeModuleClassDescription) throws DeploymentUnitProcessingException {
+                               final EEModuleClassDescription eeModuleClassDescription) throws
+            DeploymentUnitProcessingException {
 
         final String methodName = methodInfo.name();
         if (!methodName.startsWith("set") || methodInfo.args().length != 1) {
@@ -212,7 +218,8 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
         // setup the binding configuration in the class description
         eeModuleClassDescription.getConfigurators().add(new ClassConfigurator() {
             @Override
-            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws DeploymentUnitProcessingException {
+            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws
+                    DeploymentUnitProcessingException {
                 configuration.getBindingConfigurations().add(bindingConfiguration);
             }
         });
@@ -225,14 +232,16 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
 
         eeModuleClassDescription.getConfigurators().add(new ClassConfigurator() {
             @Override
-            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws DeploymentUnitProcessingException {
+            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws
+                    DeploymentUnitProcessingException {
                 configuration.getInjectionConfigurations().add(injectionConfiguration);
             }
         });
     }
 
     private void processClass(final DeploymentUnit deploymentUnit, final AnnotationInstance annotation, final ClassInfo classInfo,
-                              final EEModuleClassDescription eeModuleClassDescription) throws DeploymentUnitProcessingException {
+                              final EEModuleClassDescription eeModuleClassDescription) throws
+            DeploymentUnitProcessingException {
 
         final AnnotationValue nameValue = annotation.value("name");
         if (nameValue == null || nameValue.asString().isEmpty()) {
@@ -245,7 +254,8 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
         // setup the binding configuration in the class description
         eeModuleClassDescription.getConfigurators().add(new ClassConfigurator() {
             @Override
-            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws DeploymentUnitProcessingException {
+            public void configure(DeploymentPhaseContext context, EEModuleClassDescription description, EEModuleClassConfiguration configuration) throws
+                    DeploymentUnitProcessingException {
                 configuration.getBindingConfigurations().add(bindingConfiguration);
             }
         });
@@ -325,15 +335,16 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
     }
 
     // Register our listeners on SFSB that will be created
-    private void registerInterceptorsForExtendedPersistenceContext(ComponentDescription componentDescription, AnnotationInstance annotation) {
+    private void registerInterceptorsForExtendedPersistenceContext(SessionBeanComponentDescription componentDescription, AnnotationInstance annotation) {
         // if it's a SFSB and extended persistence context then setup appropriate interceptors
-        if (componentDescription instanceof StatefulComponentDescription && isExtendedPersistenceContext(annotation)) {
+        if (componentDescription.isStateful() && isExtendedPersistenceContext(annotation)) {
             // first setup the post construct and pre destroy component interceptors
             componentDescription.getConfigurators().addFirst(new ComponentConfigurator() {
                 @Override
-                public void configure(DeploymentPhaseContext context, ComponentDescription description, ComponentConfiguration configuration) throws DeploymentUnitProcessingException {
-                    configuration.getPostConstructInterceptors().addFirst(new SFSBCreateInterceptorFactory());
-                    configuration.getPreDestroyInterceptors().addFirst(new SFSBDestroyInterceptorFactory());
+                public void configure(DeploymentPhaseContext context, ComponentDescription description, ComponentConfiguration configuration) throws
+                        DeploymentUnitProcessingException {
+                    configuration.addPostConstructInterceptor(SFSBCreateInterceptor.FACTORY, InterceptorOrder.ComponentPostConstruct.JPA_SFSB_CREATE);
+                    configuration.addPreDestroyInterceptor(SFSBDestroyInterceptor.FACTORY, InterceptorOrder.ComponentPreDestroy.JPA_SFSB_DESTROY);
                 }
             });
 
@@ -345,26 +356,21 @@ public class JPAAnnotationParseProcessor implements DeploymentUnitProcessor {
             for (ViewDescription view : views) {
                 view.getConfigurators().addFirst(new ViewConfigurator() {
                     @Override
-                    public void configure(DeploymentPhaseContext context, ComponentConfiguration componentConfiguration, ViewDescription description, ViewConfiguration configuration) throws DeploymentUnitProcessingException {
-                        Method[] viewMethods = configuration.getProxyFactory().getCachedMethods();
-                        for (Method viewMethod : viewMethods) {
-                            configuration.getViewInterceptorDeque(viewMethod).addFirst(new ImmediateInterceptorFactory(SFSBInvocationInterceptor.INSTANCE));
-                        }
+                    public void configure(DeploymentPhaseContext context, ComponentConfiguration componentConfiguration, ViewDescription description, ViewConfiguration configuration) throws
+                            DeploymentUnitProcessingException {
+                        configuration.addViewInterceptor(SFSBInvocationInterceptor.FACTORY, InterceptorOrder.View.JPA_SFSB_INTERCEPTOR);
                     }
                 });
             }
         }
         // register interceptor on stateful/stateless SB with transactional entity manager.
         if (!isExtendedPersistenceContext(annotation) &&
-                (componentDescription instanceof StatefulComponentDescription ||
-                        componentDescription instanceof StatelessComponentDescription)) {
-            //TODO: this probably adds the interceptor in the wrong order
+                (componentDescription.isStateful() || componentDescription.isStateless())) {
             componentDescription.getConfigurators().add(new ComponentConfigurator() {
                 @Override
-                public void configure(DeploymentPhaseContext context, ComponentDescription description, ComponentConfiguration configuration) throws DeploymentUnitProcessingException {
-                    for (Method method : configuration.getDefinedComponentMethods()) {
-                        configuration.getComponentInterceptorDeque(method).addFirst(new ImmediateInterceptorFactory(SBInvocationInterceptor.INSTANCE));
-                    }
+                public void configure(DeploymentPhaseContext context, ComponentDescription description, ComponentConfiguration configuration) throws
+                        DeploymentUnitProcessingException {
+                    configuration.addComponentInterceptor(new ImmediateInterceptorFactory(SBInvocationInterceptor.INSTANCE), InterceptorOrder.Component.JPA_SESSION_BEAN_INTERCEPTOR, false);
                 }
             });
         }

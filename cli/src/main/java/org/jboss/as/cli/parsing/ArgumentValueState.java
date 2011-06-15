@@ -21,7 +21,8 @@
  */
 package org.jboss.as.cli.parsing;
 
-import org.jboss.as.cli.operation.OperationFormatException;
+import org.jboss.as.cli.CommandFormatException;
+import org.jboss.as.cli.Util;
 import org.jboss.as.cli.operation.parsing.CharacterHandler;
 import org.jboss.as.cli.operation.parsing.DefaultParsingState;
 import org.jboss.as.cli.operation.parsing.DefaultStateWithEndCharacter;
@@ -43,17 +44,22 @@ public class ArgumentValueState extends DefaultParsingState {
         super(ID);
         this.setEnterHandler(new CharacterHandler() {
             @Override
-            public void handle(ParsingContext ctx) throws OperationFormatException {
+            public void handle(ParsingContext ctx) throws CommandFormatException {
                 if(ctx.getCharacter() != '=') {
                     getHandler(ctx.getCharacter()).handle(ctx);
                 }
             }});
         putHandler(' ', GlobalCharacterHandlers.LEAVE_STATE_HANDLER);
-        enterState('"', QuotesState.QUOTES_INCLUDED);
         enterState('[', new DefaultStateWithEndCharacter("BRACKETS", ']', true, true, enterStateHandlers));
         enterState('(', new DefaultStateWithEndCharacter("PARENTHESIS", ')', true, true, enterStateHandlers));
         enterState('{', new DefaultStateWithEndCharacter("BRACES", '}', true, true, enterStateHandlers));
-        enterState('\\', EscapeCharacterState.INSTANCE);
+        if(!Util.isWindows()) {
+            // on windows we don't escape, this would mess up file system paths for example.
+            enterState('\\', EscapeCharacterState.INSTANCE);
+            enterState('"', QuotesState.QUOTES_INCLUDED);
+        } else {
+            enterState('"', new QuotesState(true, false));
+        }
         setDefaultHandler(GlobalCharacterHandlers.CONTENT_CHARACTER_HANDLER);
     }
 }

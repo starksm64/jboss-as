@@ -30,6 +30,7 @@ import org.jboss.as.ee.component.NamespaceConfigurator;
 import org.jboss.as.ee.component.ViewConfiguration;
 import org.jboss.as.ee.component.ViewConfigurator;
 import org.jboss.as.ee.component.ViewDescription;
+import org.jboss.as.ee.component.interceptors.InterceptorOrder;
 import org.jboss.as.ejb3.deployment.EjbDeploymentAttachmentKeys;
 import org.jboss.as.ejb3.deployment.EjbJarConfiguration;
 import org.jboss.as.ejb3.deployment.EjbJarDescription;
@@ -39,15 +40,15 @@ import org.jboss.as.server.deployment.DeploymentUnitProcessingException;
 import org.jboss.invocation.ImmediateInterceptorFactory;
 import org.jboss.invocation.Interceptor;
 import org.jboss.invocation.InterceptorContext;
-import org.jboss.invocation.InterceptorFactory;
 import org.jboss.msc.service.ServiceBuilder;
 import org.jboss.msc.service.ServiceName;
 
 import javax.ejb.TransactionAttributeType;
 import javax.ejb.TransactionManagementType;
 import java.lang.reflect.Method;
-import java.util.Deque;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -64,6 +65,15 @@ public abstract class EJBComponentDescription extends ComponentDescription {
     private TransactionManagementType transactionManagementType = TransactionManagementType.CONTAINER;
 
     private final Map<MethodIntf, TransactionAttributeType> txPerViewStyle1 = new HashMap<MethodIntf, TransactionAttributeType>();
+
+    /**
+     * Stores around invoke methods that are referenced in the DD that cannot be resolved until the module is loaded
+     */
+    private final List<String> aroundInvokeDDMethods = new ArrayList<String>(0);
+    private final List<String> preDestroyDDMethods = new ArrayList<String>(0);
+    private final List<String> postConstructDDMethods = new ArrayList<String>(0);
+
+
     private final PopulatingMap<MethodIntf, Map<String, TransactionAttributeType>> txPerViewStyle2 = new PopulatingMap<MethodIntf, Map<String, TransactionAttributeType>>() {
         @Override
         Map<String, TransactionAttributeType> populate() {
@@ -82,12 +92,17 @@ public abstract class EJBComponentDescription extends ComponentDescription {
         }
     };
 
-    // style 1 == beanTransactionAttribute
+    private final Map<String, TransactionAttributeType> txStyle1 = new HashMap<String, TransactionAttributeType>();
     private final Map<String, TransactionAttributeType> txStyle2 = new HashMap<String, TransactionAttributeType>();
-    private final PopulatingMap<String, Map<ArrayKey, TransactionAttributeType>> txStyle3 = new PopulatingMap<String, Map<ArrayKey, TransactionAttributeType>>() {
+    private final PopulatingMap<String, PopulatingMap<String, Map<ArrayKey, TransactionAttributeType>>> txStyle3 = new PopulatingMap<String, PopulatingMap<String,Map<ArrayKey,TransactionAttributeType>>>() {
         @Override
-        Map<ArrayKey, TransactionAttributeType> populate() {
-            return new HashMap<ArrayKey, TransactionAttributeType>();
+        PopulatingMap<String, Map<ArrayKey, TransactionAttributeType>> populate() {
+            return new PopulatingMap<String, Map<ArrayKey, TransactionAttributeType>>() {
+                @Override
+                Map<ArrayKey, TransactionAttributeType> populate() {
+                    return new HashMap<ArrayKey, TransactionAttributeType>();
+                }
+            };
         }
     };
 
@@ -122,7 +137,7 @@ public abstract class EJBComponentDescription extends ComponentDescription {
         return map.get(key);
     }
 
-    public TransactionAttributeType getTransactionAttribute(MethodIntf methodIntf, String methodName, String... methodParams) {
+    public TransactionAttributeType getTransactionAttribute(MethodIntf methodIntf, String className, String methodName, String... methodParams) {
         assert methodIntf != null : "methodIntf is null";
         assert methodName != null : "methodName is null";
         assert methodParams != null : "methodParams is null";
@@ -137,10 +152,13 @@ public abstract class EJBComponentDescription extends ComponentDescription {
         txAttr = get(txPerViewStyle1, methodIntf);
         if (txAttr != null)
             return txAttr;
-        txAttr = get(get(txStyle3, methodName), methodParamsKey);
+        txAttr = get(get(get(txStyle3, className), methodName), methodParamsKey);
         if (txAttr != null)
             return txAttr;
         txAttr = get(txStyle2, methodName);
+        if (txAttr != null)
+            return txAttr;
+        txAttr = get(txStyle1, className);
         if (txAttr != null)
             return txAttr;
         return beanTransactionAttribute;
@@ -150,17 +168,18 @@ public abstract class EJBComponentDescription extends ComponentDescription {
         return transactionManagementType;
     }
 
-    public abstract MethodIntf getMethodIntf(String viewClassName);
-
     /**
      * Style 1 (13.3.7.2.1 @1)
      *
      * @param methodIntf           the method-intf the annotations apply to or null if EJB class itself
      * @param transactionAttribute
      */
-    public void setTransactionAttribute(MethodIntf methodIntf, TransactionAttributeType transactionAttribute) {
-        if (methodIntf == null)
-            this.beanTransactionAttribute = transactionAttribute;
+    public void setTransactionAttribute(MethodIntf methodIntf, String className, TransactionAttributeType transactionAttribute) {
+        if (methodIntf != null && className != null)
+            throw new IllegalArgumentException("both methodIntf and className are set on " + getComponentName());
+        if (methodIntf == null) {
+            txStyle1.put(className, transactionAttribute);
+        }
         else
             txPerViewStyle1.put(methodIntf, transactionAttribute);
     }
@@ -187,10 +206,10 @@ public abstract class EJBComponentDescription extends ComponentDescription {
      * @param methodName
      * @param methodParams
      */
-    public void setTransactionAttribute(MethodIntf methodIntf, TransactionAttributeType transactionAttribute, String methodName, String... methodParams) {
+    public void setTransactionAttribute(MethodIntf methodIntf, TransactionAttributeType transactionAttribute, final String className, String methodName, String... methodParams) {
         ArrayKey methodParamsKey = new ArrayKey((Object[]) methodParams);
         if (methodIntf == null)
-            txStyle3.pick(methodName).put(methodParamsKey, transactionAttribute);
+            txStyle3.pick(className).pick(methodName).put(methodParamsKey, transactionAttribute);
         else
             txPerViewStyle3.pick(methodIntf).pick(methodName).put(methodParamsKey, transactionAttribute);
     }
@@ -259,13 +278,28 @@ public abstract class EJBComponentDescription extends ComponentDescription {
                 Method[] methods = configuration.getProxyFactory().getCachedMethods();
                 for (Method method : methods) {
                     if (TO_STRING_METHOD.equals(method)) {
-                        final Deque<InterceptorFactory> clientInterceptorsForMethod = configuration.getClientInterceptorDeque(method);
-                        clientInterceptorsForMethod.addFirst(new ImmediateInterceptorFactory(new ToStringMethodInterceptor()));
+                        configuration.addClientInterceptor(method, new ImmediateInterceptorFactory(new ToStringMethodInterceptor(EJBComponentDescription.this.getComponentName())), InterceptorOrder.Client.TO_STRING);
                         return;
                     }
                 }
             }
         });
+    }
+
+    public boolean isMessageDriven() {
+        return false;
+    }
+
+    public boolean isSingleton() {
+        return false;
+    }
+
+    public boolean isStateful() {
+        return false;
+    }
+
+    public boolean isStateless() {
+        return false;
     }
 
     /**
@@ -296,7 +330,14 @@ public abstract class EJBComponentDescription extends ComponentDescription {
      * method, so it's the responsibility of the component to setup this interceptor *only* on <code>toString()</code> method on the component
      * views.
      */
-    private class ToStringMethodInterceptor implements Interceptor {
+    private static class ToStringMethodInterceptor implements Interceptor {
+
+        private final String name;
+
+        public ToStringMethodInterceptor(final String name) {
+            this.name = name;
+        }
+
 
         @Override
         public Object processInvocation(InterceptorContext context) throws Exception {
@@ -304,9 +345,26 @@ public abstract class EJBComponentDescription extends ComponentDescription {
             if (componentViewInstance == null) {
                 throw new IllegalStateException("ComponentViewInstance not available in interceptor context: " + context);
             }
-            return "Proxy for view class: " + componentViewInstance.getViewClass().getName() + " of EJB: " + EJBComponentDescription.this.getComponentName();
+            return "Proxy for view class: " + componentViewInstance.getViewClass().getName() + " of EJB: " + name;
         }
     }
 
+    public List<String> getAroundInvokeDDMethods() {
+        return aroundInvokeDDMethods;
+    }
 
+    public List<String> getPostConstructDDMethods() {
+        return postConstructDDMethods;
+    }
+
+    public List<String> getPreDestroyDDMethods() {
+        return preDestroyDDMethods;
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getName() + "{" +
+                "serviceName=" + getServiceName() +
+                '}' + "@" + Integer.toHexString(hashCode());
+    }
 }

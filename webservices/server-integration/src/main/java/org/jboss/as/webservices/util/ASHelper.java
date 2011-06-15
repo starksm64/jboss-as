@@ -21,9 +21,21 @@
  */
 package org.jboss.as.webservices.util;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import javax.jws.WebService;
+import javax.xml.ws.WebServiceProvider;
+
 import org.jboss.as.server.deployment.AttachmentKey;
+import org.jboss.as.server.deployment.Attachments;
 import org.jboss.as.server.deployment.DeploymentUnit;
 import org.jboss.as.server.deployment.annotation.AnnotationIndexUtils;
+import org.jboss.as.server.deployment.annotation.CompositeIndex;
 import org.jboss.as.server.deployment.module.ModuleRootMarker;
 import org.jboss.as.server.deployment.module.ResourceRoot;
 import org.jboss.as.web.deployment.WarMetaData;
@@ -37,18 +49,8 @@ import org.jboss.metadata.common.jboss.WebserviceDescriptionsMetaData;
 import org.jboss.metadata.web.jboss.JBossServletMetaData;
 import org.jboss.metadata.web.jboss.JBossWebMetaData;
 import org.jboss.metadata.web.spec.ServletMetaData;
-import org.jboss.wsf.spi.deployment.Deployment.DeploymentType;
 import org.jboss.wsf.spi.deployment.integration.WebServiceDeclaration;
 import org.jboss.wsf.spi.deployment.integration.WebServiceDeployment;
-
-import javax.jws.WebService;
-import javax.xml.ws.WebServiceProvider;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * JBoss AS integration helper class.
@@ -66,6 +68,12 @@ public final class ASHelper {
     /** Logger. */
     private static final Logger LOGGER = Logger.getLogger(ASHelper.class);
 
+    /** @WebService jandex annotation. */
+    public static final DotName WEB_SERVICE_ANNOTATION = DotName.createSimple(WebService.class.getName());
+
+    /** @WebServiceProvider jandex annotation. */
+    public static final DotName WEB_SERVICE_PROVIDER_ANNOTATION = DotName.createSimple(WebServiceProvider.class.getName());
+
     /**
      * Forbidden constructor.
      */
@@ -81,106 +89,6 @@ public final class ASHelper {
      */
     public static boolean isWebServiceDeployment(final DeploymentUnit unit) {
         return ASHelper.getOptionalAttachment(unit, WSAttachmentKeys.DEPLOYMENT_TYPE_KEY) != null;
-    }
-
-    /**
-     * Returns true if unit contains JAXRPC EJB deployment.
-     *
-     * @param unit deployment unit
-     * @return true if JAXRPC EJB deployment, false otherwise
-     */
-    public static boolean isJaxrpcEjbDeployment(final DeploymentUnit unit) {
-        final DeploymentType deploymentType = ASHelper.getOptionalAttachment(unit, WSAttachmentKeys.DEPLOYMENT_TYPE_KEY);
-
-        return DeploymentType.JAXRPC_EJB21.equals(deploymentType);
-    }
-
-    /**
-     * Returns true if unit contains JAXRPC JSE deployment.
-     *
-     * @param unit deployment unit
-     * @return true if JAXRPC JSE deployment, false otherwise
-     */
-    public static boolean isJaxrpcJseDeployment(final DeploymentUnit unit) {
-        final DeploymentType deploymentType = ASHelper.getOptionalAttachment(unit, WSAttachmentKeys.DEPLOYMENT_TYPE_KEY);
-
-        return DeploymentType.JAXRPC_JSE.equals(deploymentType);
-    }
-
-    /**
-     * Returns true if unit contains JAXWS EJB deployment.
-     *
-     * @param unit deployment unit
-     * @return true if JAXWS EJB deployment, false otherwise
-     */
-    public static boolean isJaxwsEjbDeployment(final DeploymentUnit unit) {
-        final DeploymentType deploymentType = ASHelper.getOptionalAttachment(unit, WSAttachmentKeys.DEPLOYMENT_TYPE_KEY);
-
-        return DeploymentType.JAXWS_EJB3.equals(deploymentType);
-    }
-
-    /**
-     * Returns true if unit contains JAXWS JSE deployment.
-     *
-     * @param unit deployment unit
-     * @return true if JAXWS JSE deployment, false otherwise
-     */
-    public static boolean isJaxwsJseDeployment(final DeploymentUnit unit) {
-        final DeploymentType deploymentType = ASHelper.getOptionalAttachment(unit, WSAttachmentKeys.DEPLOYMENT_TYPE_KEY);
-
-        return DeploymentType.JAXWS_JSE.equals(deploymentType);
-    }
-
-    /**
-     * Returns true if unit contains either JAXWS JSE or JAXRPC JSE deployment.
-     *
-     * @param unit deployment unit
-     * @return true if either JAXWS JSE or JAXRPC JSE deployment, false otherwise.
-     */
-    public static boolean isJseDeployment(final DeploymentUnit unit) {
-        final boolean isJaxwsJse = ASHelper.isJaxwsJseDeployment(unit);
-        final boolean isJaxrpcJse = ASHelper.isJaxrpcJseDeployment(unit);
-
-        return isJaxwsJse || isJaxrpcJse;
-    }
-
-    /**
-     * Returns true if unit contains either JAXWS EJB or JAXRPC EJB deployment.
-     *
-     * @param unit deployment unit
-     * @return true if either JAXWS EJB or JAXRPC EJB deployment, false otherwise
-     */
-    public static boolean isEjbDeployment(final DeploymentUnit unit) {
-        final boolean isJaxwsEjb = ASHelper.isJaxwsEjbDeployment(unit);
-        final boolean isJaxrpcEjb = ASHelper.isJaxrpcEjbDeployment(unit);
-
-        return isJaxwsEjb || isJaxrpcEjb;
-    }
-
-    /**
-     * Returns true if unit contains either JAXWS EJB or JAXWS JSE deployment.
-     *
-     * @param unit deployment unit
-     * @return true if either JAXWS EJB or JAXWS JSE deployment, false otherwise
-     */
-    public static boolean isJaxwsDeployment(final DeploymentUnit unit) {
-        final boolean isJaxwsEjb = ASHelper.isJaxwsEjbDeployment(unit);
-        final boolean isJaxwsJse = ASHelper.isJaxwsJseDeployment(unit);
-
-        return isJaxwsEjb || isJaxwsJse;
-    }
-
-    /**
-     * Returns true if unit contains either JAXRPC EJB or JAXRPC JSE deployment.
-     *
-     * @param unit deployment unit
-     * @return true if either JAXRPC EJB or JAXRPC JSE deployment, false otherwise
-     */
-    public static boolean isJaxrpcDeployment(final DeploymentUnit unit) {
-        final boolean isJaxrpcEjb = ASHelper.isJaxrpcEjbDeployment(unit);
-        final boolean isJaxrpcJse = ASHelper.isJaxrpcJseDeployment(unit);
-
-        return isJaxrpcEjb || isJaxrpcJse;
     }
 
     /**
@@ -316,8 +224,8 @@ public final class ASHelper {
      */
     private static List<ServletMetaData> getWebServiceServlets(final DeploymentUnit unit, final boolean jaxws) {
         final JBossWebMetaData jbossWebMD = getJBossWebMetaData(unit);
-        final Index annotationIndex = getRootAnnotationIndex(unit);
-        return selectWebServiceServlets(annotationIndex, jbossWebMD.getServlets(), jaxws);
+        final CompositeIndex compositeIndex = ASHelper.getRequiredAttachment(unit, Attachments.COMPOSITE_ANNOTATION_INDEX);
+        return selectWebServiceServlets(compositeIndex, jbossWebMD.getServlets(), jaxws);
     }
 
     /**
@@ -328,37 +236,42 @@ public final class ASHelper {
      * @param jaxws if passed value is <b>true</b> JAXWS servlets list will be returned, otherwise JAXRPC servlets list
      * @return either JAXRPC or JAXWS servlets list
      */
-    public static <T extends ServletMetaData> List<ServletMetaData> selectWebServiceServlets(final Index annotationIndex, final Collection<T> smd, final boolean jaxws) {
+    public static <T extends ServletMetaData> List<ServletMetaData> selectWebServiceServlets(final CompositeIndex index, final Collection<T> smd, final boolean jaxws) {
+        if (smd == null) return Collections.emptyList();
+
         final List<ServletMetaData> endpoints = new ArrayList<ServletMetaData>();
-        final DotName webserviceAnnotation = DotName.createSimple(WebService.class.getName());
-        final DotName webserviceProviderAnnotation = DotName.createSimple(WebServiceProvider.class.getName());
 
-        if(smd != null) for (ServletMetaData servletMD : smd) {
-                final String endpointClassName = ASHelper.getEndpointName(servletMD);
-                if (endpointClassName != null && endpointClassName.length() > 0) { // exclude JSP
-                    // check webservice annotations
-                    Map<DotName, List<AnnotationInstance>> map = null;
-                    if (annotationIndex != null) {
-                        ClassInfo ci = annotationIndex.getClassByName(DotName.createSimple(endpointClassName));
-                        if (ci != null) {
-                            map = ci.annotations();
-                        }
-                    }
-                    if (map == null) {
-                        map = new HashMap<DotName, List<AnnotationInstance>>();
-                    }
-                    final boolean isWebService = map.containsKey(webserviceAnnotation);
-                    final boolean isWebServiceProvider = map.containsKey(webserviceProviderAnnotation);
-                    // detect webservice type
-                    final boolean isJaxwsEndpoint = jaxws && (isWebService || isWebServiceProvider);
-                    final boolean isJaxrpcEndpoint = !jaxws && (!isWebService && !isWebServiceProvider);
+        for (final ServletMetaData servletMD : smd) {
+            final boolean isWebServiceEndpoint = isWebserviceEndpoint(servletMD, index);
+            final boolean isJaxwsEndpoint = jaxws && isWebServiceEndpoint;
+            final boolean isJaxrpcEndpoint = !jaxws && isWebServiceEndpoint;
 
-                    if (isJaxwsEndpoint || isJaxrpcEndpoint) {
-                        endpoints.add(servletMD);
-                    }
-                }
+            if (isJaxwsEndpoint || isJaxrpcEndpoint) {
+                endpoints.add(servletMD);
             }
+        }
+
         return endpoints;
+    }
+
+    private static boolean isWebserviceEndpoint(final ServletMetaData servletMD, final CompositeIndex index) {
+        final String endpointClassName = ASHelper.getEndpointName(servletMD);
+        if (isJSP(endpointClassName)) return false;
+        final DotName endpointDotName = DotName.createSimple(endpointClassName);
+        final ClassInfo endpointClassInfo = index.getClassByName(endpointDotName);
+
+        if (endpointClassInfo != null) {
+            if (endpointClassInfo.annotations().containsKey(WEB_SERVICE_ANNOTATION))
+                return true;
+            if (endpointClassInfo.annotations().containsKey(WEB_SERVICE_PROVIDER_ANNOTATION))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static boolean isJSP(final String endpointClassName) {
+        return endpointClassName == null || endpointClassName.length() == 0;
     }
 
     /**
@@ -379,13 +292,8 @@ public final class ASHelper {
         return result;
     }
 
-    public static Index getRootAnnotationIndex(final DeploymentUnit unit) {
-        Map<ResourceRoot, Index> indexes = AnnotationIndexUtils.getAnnotationIndexes(unit);
-        for (ResourceRoot rr : indexes.keySet()) {
-            if (ModuleRootMarker.isModuleRoot(rr)) {
-                return indexes.get(rr);
-            }
-        }
-        return null;
+    public static List<AnnotationInstance> getAnnotations(final DeploymentUnit unit, final DotName annotation) {
+       final CompositeIndex compositeIndex = ASHelper.getRequiredAttachment(unit, Attachments.COMPOSITE_ANNOTATION_INDEX);
+       return compositeIndex.getAnnotations(annotation);
     }
 }

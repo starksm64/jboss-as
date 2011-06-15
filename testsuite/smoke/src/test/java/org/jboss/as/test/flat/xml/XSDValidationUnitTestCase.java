@@ -21,22 +21,22 @@
  */
 package org.jboss.as.test.flat.xml;
 
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.fail;
+
+import java.net.URL;
+
+import javax.xml.XMLConstants;
+import javax.xml.validation.SchemaFactory;
+
 import org.junit.Ignore;
 import org.junit.Test;
 import org.xml.sax.ErrorHandler;
 import org.xml.sax.SAXException;
 import org.xml.sax.SAXParseException;
 
-import javax.xml.XMLConstants;
-import javax.xml.validation.SchemaFactory;
-import java.net.URL;
-
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.fail;
-
 /**
  * A XSDValidationUnitTestCase.
- *
  * @author <a href="alex@jboss.com">Alexey Loubyansky</a>
  * @version $Revision: 1.1 $
  */
@@ -48,20 +48,19 @@ public class XSDValidationUnitTestCase {
     }
 
     @Test
+    @Ignore("[AS7-814] Fix or remove ignored smoke tests")
     public void testJBossConnector() throws Exception {
-        validateXsd("jboss-connector.xsd");
+        validateXsd("jboss-jca.xsd");
     }
 
-    // FIXME disabled until it passes
     @Test
-    @Ignore
+    @Ignore("[AS7-814] Fix or remove ignored smoke tests")
     public void testJBossDatasources() throws Exception {
         validateXsd("jboss-datasources.xsd");
     }
 
-    // FIXME disabled until it passes
     @Test
-    @Ignore
+    @Ignore("[AS7-814] Fix or remove ignored smoke tests")
     public void testJBossResourceAdapters() throws Exception {
         validateXsd("jboss-resource-adapters.xsd");
     }
@@ -79,11 +78,6 @@ public class XSDValidationUnitTestCase {
     @Test
     public void testJBossMessaging() throws Exception {
         validateXsd("jboss-messaging.xsd");
-    }
-
-    @Test
-    public void testJBossJMS() throws Exception {
-        validateXsd("jboss-jms.xsd");
     }
 
     @Test

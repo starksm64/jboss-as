@@ -21,6 +21,13 @@
  */
 package org.jboss.as.embedded;
 
+import org.jboss.as.controller.client.ModelControllerClient;
+
+import javax.naming.Context;
+import java.io.File;
+import java.io.IOException;
+import java.util.concurrent.ExecutionException;
+
 /**
  * The standalone server interface.
  *
@@ -28,8 +35,25 @@ package org.jboss.as.embedded;
  * @since 17-Nov-2010
  */
 public interface StandaloneServer {
+    // TODO: use a DeploymentPlan
+    @Deprecated
+    void deploy(File file) throws IOException, ExecutionException, InterruptedException;
+
+    /**
+     * Retrieve a naming context for looking up references to session beans executing in
+     * the embeddable container.
+     *
+     * @return The naming context.
+     */
+    Context getContext();
+
+    ModelControllerClient getModelControllerClient();
 
     void start() throws ServerStartException;
 
     void stop();
+
+    // TODO: use a DeploymentPlan
+    @Deprecated
+    void undeploy(File file) throws ExecutionException, InterruptedException;
 }
